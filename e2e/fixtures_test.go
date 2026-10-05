@@ -110,3 +110,37 @@ func provisionBug(t *testing.T, env []string) int {
 	}
 	return created.ID
 }
+
+// provisionExecution creates the project+execution chain tasks live under.
+func provisionExecution(t *testing.T, env []string) int {
+	t.Helper()
+	c := fixtureClient(t)
+	productID := ensureFixtureProduct(t, c)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	raw, err := c.API("POST", "/projects", nil, map[string]any{
+		"name": "devflow-e2e-" + suffix, "model": "scrum",
+		"begin": "2026-10-05", "end": "2026-12-31",
+		"workflowGroup": 0, "PM": c.Account, "products": []int{productID},
+	})
+	if err != nil {
+		t.Fatalf("fixture project create: %v (%s)", err, raw)
+	}
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil || created.ID == 0 {
+		t.Fatalf("fixture project response has no id: %s", raw)
+	}
+	raw, err = c.API("POST", "/executions", nil, map[string]any{
+		"project": created.ID, "name": "devflow-sprint-" + suffix,
+		"begin": "2026-10-05", "end": "2026-11-30",
+	})
+	if err != nil {
+		t.Fatalf("fixture execution create: %v (%s)", err, raw)
+	}
+	if err := json.Unmarshal(raw, &created); err != nil || created.ID == 0 {
+		t.Fatalf("fixture execution response has no id: %s", raw)
+	}
+	return created.ID
+}

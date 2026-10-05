@@ -103,16 +103,20 @@ func (f *storyFields) buildFields() (map[string]any, error) {
 	if *f.title != "" {
 		body["title"] = *f.title
 	}
-	spec, err := resolveContent(*f.spec, *f.specFile)
-	if err != nil {
-		return nil, fmt.Errorf("--spec: %w", err)
+	if *f.spec != "" || *f.specFile != "" {
+		spec, err := resolveContent(*f.spec, *f.specFile)
+		if err != nil {
+			return nil, fmt.Errorf("--spec: %w", err)
+		}
+		body["spec"] = spec
 	}
-	set("spec", "--spec", spec)
-	verify, err := resolveContent(*f.verify, *f.verifyFile)
-	if err != nil {
-		return nil, fmt.Errorf("--verify: %w", err)
+	if *f.verify != "" || *f.verifyFile != "" {
+		verify, err := resolveContent(*f.verify, *f.verifyFile)
+		if err != nil {
+			return nil, fmt.Errorf("--verify: %w", err)
+		}
+		body["verify"] = verify
 	}
-	set("verify", "--verify", verify)
 	if *f.reviewer != "" {
 		body["reviewer"] = strings.Split(*f.reviewer, ",")
 	}
@@ -220,7 +224,7 @@ func storyUpdate(args []string) int {
 }
 
 func storyGet(args []string) int {
-	id, ok := storyID(args)
+	id, ok := parseID(args, "story get")
 	if !ok {
 		return 2
 	}
@@ -234,20 +238,11 @@ func storyGet(args []string) int {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
-	// The server wraps the object: {"status":"success","story":{...}}.
-	var wrapped struct {
-		Story json.RawMessage `json:"story"`
-	}
-	if err := json.Unmarshal(raw, &wrapped); err != nil || len(wrapped.Story) == 0 {
-		fmt.Fprintf(os.Stderr, "ERROR: unexpected response: %s\n", snippet(string(raw)))
-		return 1
-	}
-	fmt.Println(string(wrapped.Story))
-	return 0
+	return printWrapped(raw, "story")
 }
 
 func storyTransition(action string, args []string) int {
-	id, ok := storyID(args)
+	id, ok := parseID(args, "story "+action)
 	if !ok {
 		return 2
 	}
@@ -259,10 +254,14 @@ func storyTransition(action string, args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
-	html, err := resolveContent(*comment, *commentFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		return 2
+	html := ""
+	if *comment != "" || *commentFile != "" {
+		var err error
+		html, err = resolveContent(*comment, *commentFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			return 2
+		}
 	}
 	if action == "close" && *reason == "" {
 		fmt.Fprintln(os.Stderr, "ERROR: story close needs --reason")
@@ -296,9 +295,10 @@ func storyTransition(action string, args []string) int {
 	return 0
 }
 
-func storyID(args []string) (int, bool) {
+// parseID extracts the <id> argument for a command.
+func parseID(args []string, context string) (int, bool) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "ERROR: missing story <id>")
+		fmt.Fprintf(os.Stderr, "ERROR: %s needs an <id>\n", context)
 		return 0, false
 	}
 	id, err := strconv.Atoi(args[0])

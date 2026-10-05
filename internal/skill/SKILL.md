@@ -17,7 +17,8 @@ Zentao instances via profiles.
 
 ## When to use
 
-- Creating stories and driving their status (activate/close)
+- Creating and driving development work: stories (requirements), tasks
+  (development work), bugs (issues found in testing)
 - Adding comments/评论/备注/留言 to Zentao objects (any type: story, task, bug, epic, ...)
 - Listing comments on an object
 - Switching between Zentao instances (profiles)
@@ -53,13 +54,20 @@ zentao login -s http://zentao.corp/zentao -u admin --password-stdin   # safe for
 zentao login -s http://zentao.corp/zentao -u admin -p PASS            # human use (visible in history)
 zentao login                          # verify the currently resolved target
 
-# Create a story and drive its status
+# The development loop: story > task > bug
 zentao story create --product 1 --title 'Fix login timeout' \
-  --spec '<p>description</p>' --verify '<p>acceptance criteria</p>' --reviewer admin
-zentao story activate 14 --comment '<p>starting</p>'   # reviewing -> active
-zentao story close 14 --reason done --comment '<p>shipped</p>'   # -> closed
-zentao story update 14 --spec '<p>updated</p>'
-zentao story get 14                                  # full story as JSON
+  --spec '<p>description</p>' --verify '<p>acceptance</p>' --reviewer admin
+zentao task create --execution 2 --name 'Rework sessions' --story 14 --assigned-to dev1
+zentao bug create --product 1 --title 'Session dies on refresh' --steps '<p>1. ...</p>'
+
+# Status flows
+zentao story activate 14 --comment '<p>starting</p>'
+zentao story close 14 --reason done --comment '<p>shipped</p>'
+zentao task start 5 --consumed 1 --left 4; zentao task finish 5 --consumed 2; zentao task close 5
+zentao bug resolve 12 --resolution fixed --comment '<p>fixed</p>'; zentao bug close 12
+
+# Read any object as JSON
+zentao story get 14; zentao task get 5; zentao bug get 12
 
 # Comments (HTML only - Zentao open source renders HTML only)
 zentao comment add story 14 --content '<p>Done, MR: !11 merged</p>'

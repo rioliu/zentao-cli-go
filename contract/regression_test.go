@@ -267,3 +267,174 @@ func TestStoryLifecycle_RoundTrip(t *testing.T) {
 		t.Errorf("close comment not found in action stream %v", actions)
 	}
 }
+
+// ensureExecution creates the project+execution chain tasks live under
+// (unique names per run, like the other fixtures).
+func ensureExecution(t *testing.T, c *zclient.Client, productID int) int {
+	t.Helper()
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	raw, err := postJSON(t, c, "/projects", nil, map[string]any{
+		"name": "devflow-" + suffix, "model": "scrum",
+		"begin": "2026-10-05", "end": "2026-12-31",
+		"workflowGroup": 0, "PM": c.Account, "products": []int{productID},
+	})
+	if err != nil {
+		t.Fatalf("create project: %v (%s)", err, raw)
+	}
+	projectID, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("project create has no id: %s", raw)
+	}
+	raw, err = postJSON(t, c, "/executions", nil, map[string]any{
+		"project": projectID, "name": "sprint-" + suffix, "begin": "2026-10-05", "end": "2026-11-30",
+	})
+	if err != nil {
+		t.Fatalf("create execution: %v (%s)", err, raw)
+	}
+	execID, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("execution create has no id: %s", raw)
+	}
+	return execID
+}
+
+func createdIDOf(raw string) (int, bool) {
+	var created struct {
+		ID int `json:"id"`
+	}
+	_ = json.Unmarshal([]byte(raw), &created)
+	return created.ID, created.ID != 0
+}
+
+// TestTaskLifecycle_RoundTrip pins the task workflow end to end: create ->
+// start -> finish -> close, with read-backs for every undeclared required
+// field (start: consumed + 'left'; finish: realStarted + strictly-later
+// finishedDate; 'remain' is silently ignored by the server - the field is
+// 'left', and left=0 on start auto-finishes the task).
+func TestTaskLifecycle_RoundTrip(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	execID := ensureExecution(t, c, productID)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	raw, err := postJSON(t, c, "/tasks", nil, map[string]any{
+		"name": "task-lifecycle-" + suffix, "executionID": execID,
+		"assignedTo": c.Account, "desc": "<p>task-desc " + suffix + "</p>",
+	})
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, raw)
+	}
+	id, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("create response has no id: %s", raw)
+	}
+
+	readBack := func() map[string]any {
+		raw, err := c.API("GET", fmt.Sprintf("/tasks/%d", id), nil, nil)
+		if err != nil {
+			t.Fatalf("get: %v (%s)", err, raw)
+		}
+		var wrapped struct {
+			Task map[string]any `json:"task"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Task == nil {
+			t.Fatalf("get response has no task: %s", raw)
+		}
+		return wrapped.Task
+	}
+	if !strings.Contains(fmt.Sprint(readBack()["desc"]), suffix) {
+		t.Errorf("desc silently dropped on create: %v", readBack()["desc"])
+	}
+
+	status := func() string { return fmt.Sprint(readBack()["status"]) }
+
+	if _, err := c.API("POST", fmt.Sprintf("/tasks/%d/start", id), nil,
+		map[string]any{"consumed": 1, "left": 10, "comment": "<p>start " + suffix + "</p>"}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got := status(); got != "doing" {
+		t.Errorf("status after start = %q, want doing", got)
+	}
+
+	if _, err := c.API("POST", fmt.Sprintf("/tasks/%d/finish", id), nil,
+		map[string]any{
+			"realStarted": "2026-10-05 09:00:00", "finishedDate": "2026-10-05 18:00:00",
+			"currentConsumed": 1, "left": 0, "comment": "<p>finish " + suffix + "</p>",
+		}); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if got := status(); got != "done" {
+		t.Errorf("status after finish = %q, want done", got)
+	}
+
+	if _, err := c.API("POST", fmt.Sprintf("/tasks/%d/close", id), nil,
+		map[string]any{"comment": "<p>close " + suffix + "</p>"}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got := status(); got != "closed" {
+		t.Errorf("status after close = %q, want closed", got)
+	}
+}
+
+// TestBugLifecycle_RoundTrip pins the bug workflow: create -> resolve ->
+// confirm (reopen) -> activate -> resolve -> close. The critical quirk:
+// resolvedBuild must round-trip as a STRING (arrays become "Array").
+func TestBugLifecycle_RoundTrip(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	id := createBug(t, c, productID, "bug-lifecycle-"+suffix)
+	readBack := func() map[string]any {
+		raw, err := c.API("GET", fmt.Sprintf("/bugs/%d", id), nil, nil)
+		if err != nil {
+			t.Fatalf("get: %v (%s)", err, raw)
+		}
+		var wrapped struct {
+			Bug map[string]any `json:"bug"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Bug == nil {
+			t.Fatalf("get response has no bug: %s", raw)
+		}
+		return wrapped.Bug
+	}
+	status := func() string { return fmt.Sprint(readBack()["status"]) }
+
+	if got := fmt.Sprint(readBack()["openedBuild"]); got != "trunk" {
+		t.Errorf("openedBuild on create = %q, want trunk", got)
+	}
+
+	if _, err := c.API("POST", fmt.Sprintf("/bugs/%d/resolve", id), nil,
+		map[string]any{"resolution": "fixed", "resolvedBuild": "trunk", "comment": "<p>fix " + suffix + "</p>"}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := status(); got != "resolved" {
+		t.Errorf("status after resolve = %q, want resolved", got)
+	}
+	if got := fmt.Sprint(readBack()["resolvedBuild"]); got != "trunk" {
+		t.Errorf("resolvedBuild = %q, want trunk (arrays stringify to 'Array')", got)
+	}
+
+	if _, err := c.API("POST", fmt.Sprintf("/bugs/%d/confirm", id), nil,
+		map[string]any{"comment": "<p>not fixed " + suffix + "</p>"}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+
+	if _, err := c.API("POST", fmt.Sprintf("/bugs/%d/close", id), nil,
+		map[string]any{"comment": "<p>close " + suffix + "</p>"}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got := status(); got != "closed" {
+		t.Errorf("status after close = %q, want closed", got)
+	}
+
+	// Reopening from closed sometimes requires openedBuild (state dependent),
+	// so the CLI sends it unconditionally; with it, reopen must always work.
+	if _, err := c.API("POST", fmt.Sprintf("/bugs/%d/activate", id), nil,
+		map[string]any{"openedBuild": "trunk", "comment": "<p>reopen " + suffix + "</p>"}); err != nil {
+		t.Fatalf("activate with openedBuild: %v", err)
+	}
+	if got := status(); got != "active" {
+		t.Errorf("status after activate = %q, want active", got)
+	}
+}

@@ -24,6 +24,8 @@ Usage:
   zentao [--profile <key|alias>] story update <id> [options]
   zentao [--profile <key|alias>] story get <id>
   zentao [--profile <key|alias>] story activate|change|close <id> [options]
+  zentao [--profile <key|alias>] task create|update|get|start|finish|close|activate ...
+  zentao [--profile <key|alias>] bug create|update|get|resolve|confirm|close|activate ...
   zentao profile [ ... ]            manage/switch connection profiles
   zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin]
                                         authenticate, warm sessions, save profile
@@ -136,6 +138,10 @@ func Execute() int {
 		return runComment(args[1:])
 	case "story":
 		return runStory(args[1:])
+	case "task":
+		return runTask(args[1:])
+	case "bug":
+		return runBug(args[1:])
 	case "profile":
 		return runProfile(args[1:])
 	case "login":

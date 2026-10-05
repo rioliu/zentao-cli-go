@@ -82,49 +82,63 @@ wrong password. Useful options: `--as prod` saves a short alias,
 `--save-password` stores the password (0600) so expired sessions can renew
 without prompting.
 
-### 3. Create a story
+### 3. Create: story > task > bug
+
+The development loop in Zentao terms: a **story** captures the requirement,
+**tasks** are the development work under it, **bugs** are what testing finds.
 
 ```bash
+# Story: the requirement
 zentao story create --product 1 --title 'Fix login timeout' \
   --spec '<p>Users are logged out after 5 minutes...</p>' \
-  --verify '<p>Session survives 30 minutes of activity</p>' \
-  --reviewer admin
+  --verify '<p>Session survives 30 minutes of activity</p>' --reviewer admin
+
+# Task: the work, linked to the story (tasks live under an execution/sprint)
+zentao task create --execution 2 --name 'Rework session handling' \
+  --story 14 --assigned-to dev1 --estimate 8
+
+# Bug: what testing found
+zentao bug create --product 1 --title 'Session dies on page refresh' \
+  --severity 3 --type codeerror --steps '<p>1. login 2. refresh 3. logged out</p>'
 ```
 
-New stories start in `reviewing` (with a reviewer) or `wait`. Use
-`--spec-file`/`--verify-file` for large HTML (`-` reads stdin).
+Content is **HTML** (Zentao open source renders HTML only); use the
+`--spec-file`/`--steps-file`/`--content-file` forms for large payloads (`-`
+reads stdin). `story get` / `task get` / `bug get` print the full object JSON.
 
-### 4. Add a comment
-
-Comment content is **HTML** (Zentao open source renders HTML only):
+### 4. Comment as you work
 
 ```bash
 zentao comment add story 14 --content '<p>MR: !11 merged</p>'
+zentao comment add task 5 --content '<p>blocked on API keys</p>'
 zentao comment add bug 12 --content-file note.html
-
-echo '<p>from stdin</p>' | zentao comment add task 5 --content-file -
 zentao comment list story 14     # JSON: [{"id": N, "comment": "<html>"}]
 ```
 
 Works for any object type: `story`, `task`, `bug`, `epic`, `requirement`,
-`testcase`, `execution`, `project`, ... Use `--content-file` or stdin for
-large HTML payloads instead of giant shell arguments.
+`testcase`, `execution`, `project`, ...
 
 ### 5. Update status
 
 ```bash
-zentao story activate 14 --comment '<p>starting work</p>'   # reviewing -> active
-zentao story close 14 --reason done --comment '<p>shipped</p>'  # -> closed
-zentao story get 14          # verify: full story as JSON
+# Story: reviewing -> active -> closed
+zentao story activate 14 --comment '<p>starting work</p>'
+zentao story close 14 --reason done --comment '<p>shipped</p>'
+
+# Task: wait -> doing -> done -> closed
+zentao task start 5 --consumed 1 --left 4
+zentao task finish 5 --consumed 2
+zentao task close 5 --comment '<p>merged</p>'
+
+# Bug: active -> resolved -> closed (confirm/activate reopen)
+zentao bug resolve 12 --resolution fixed --comment '<p>fixed in !12</p>'
+zentao bug close 12 --comment '<p>verified</p>'
 ```
 
-Status flow: `create` -> `reviewing` -> (`activate`) -> `active` ->
-(`close`) -> `closed`. Closing requires `--reason`; the comment lands in the
-story's action stream alongside the status change. Update fields any time:
-
-```bash
-zentao story update 14 --spec '<p>updated description</p>' --verify '<p>...</p>'
-```
+Fields can be updated at any point (`zentao story update 14 --spec '...'`,
+`zentao task update 5 --assigned-to dev2`, `zentao bug update 12 --severity 4`).
+Notes passed with `--comment` land in the object's action stream alongside the
+status change.
 
 ### 6. Work with multiple Zentao instances
 
@@ -179,10 +193,9 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
 | `zentao comment list <module> <id>` | list comments as JSON |
-| `zentao story create --product N --title T [options]` | create a story (--spec, --verify, --reviewer, ...) |
-| `zentao story update <id> [options]` | update story fields (partial updates OK) |
-| `zentao story get <id>` | read a story as JSON |
-| `zentao story activate \| change \| close <id>` | status transitions (close needs --reason) |
+| `zentao story create \| update \| get \| activate \| change \| close` | story lifecycle |
+| `zentao task create \| update \| get \| start \| finish \| close \| activate` | task lifecycle |
+| `zentao bug create \| update \| get \| resolve \| confirm \| close \| activate` | bug lifecycle |
 | `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
 | `zentao --profile <key\|alias> <command>` | run one command against a specific profile |
 | `zentao add-skill [pi \| claude \| agents \| --dir X]` | install the bundled agent skill |
