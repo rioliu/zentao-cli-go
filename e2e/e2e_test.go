@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func run(t *testing.T, env []string, stdin string, args ...string) (int, string,
 
 func TestE2E_Version(t *testing.T) {
 	code, out, _ := run(t, os.Environ(), "", "version")
-	if code != 0 || !strings.Contains(out, "0.1.0") {
+	if code != 0 || !regexp.MustCompile(`^\d+\.\d+\.\d+`).MatchString(out) {
 		t.Errorf("version: code=%d out=%q", code, out)
 	}
 }

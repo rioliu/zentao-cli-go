@@ -9,7 +9,9 @@ import (
 	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
 
-const Version = "0.1.0"
+// Version is the CLI version. Release builds override it via
+// -ldflags "-X github.com/rioliu/zentao-cli-go/internal/cmd.Version=<tag>".
+var Version = "0.1.2"
 
 // Usage text kept in one place; subcommands add their own on errors.
 const usage = `zentao - Zentao CLI (Go)

@@ -36,7 +36,9 @@ release: vet test-unit
 		os=$${target%/*}; arch=$${target#*/}; \
 		echo "[build] $$os/$$arch"; \
 		out=$$(mktemp -d); \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '-s -w' -o $$out/zentao ./cmd/zentao; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+			-ldflags "-s -w -X github.com/rioliu/zentao-cli-go/internal/cmd.Version=$(VERSION)" \
+			-o $$out/zentao ./cmd/zentao; \
 		tar -czf $(DIST)/zentao-cli-go_$(VERSION)_$${os}_$${arch}.tar.gz -C $$out zentao; \
 		rm -rf $$out; \
 	done
