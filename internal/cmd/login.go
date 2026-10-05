@@ -35,6 +35,7 @@ flags, login verifies the currently resolved target.`
 func runLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, loginUsage) }
 	var server, account, password string
 	fs.StringVar(&server, "s", "", "Zentao base URL")
 	fs.StringVar(&server, "server", "", "Zentao base URL")
