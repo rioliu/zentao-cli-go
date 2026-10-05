@@ -89,6 +89,9 @@ feedback, ticket, user, program, doc, file.
 - Exit codes: 0 success, 1 runtime/auth failure, 2 usage error
 - `comment list` prints a JSON array of `{"id": N, "comment": "<html>"}`
 - Comment content must be HTML (`<p>...</p>`); markdown is not rendered
+- Bug comments work through the same route as everything else - the old
+  official-CLI workaround (abusing `bugs/{id}/confirm`) is obsolete and must
+  not be used
 - For large content use `--content-file` or stdin, never giant argv strings
 - Unknown modules are rejected client-side (the server would silently orphan
   the comment)

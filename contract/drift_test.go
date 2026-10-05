@@ -143,6 +143,30 @@ func createEpic(t *testing.T, c *zclient.Client, productID int, title string) in
 	return 0
 }
 
+// createBug creates a bug via the QUERY placement (required for bugs on
+// 22.4) with the verified minimal field set.
+func createBug(t *testing.T, c *zclient.Client, productID int, title string) int {
+	t.Helper()
+	raw, err := postJSON(t, c, "/bugs", url.Values{"productID": {fmt.Sprint(productID)}},
+		map[string]any{
+			"title":       title,
+			"severity":    3,
+			"type":        "codeerror",
+			"steps":       "<p>steps</p>",
+			"openedBuild": []string{"trunk"},
+		})
+	if err != nil {
+		t.Fatalf("create bug: %v (%s)", err, raw)
+	}
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &created); err != nil || created.ID == 0 {
+		t.Fatalf("bug create response has no id: %s", raw)
+	}
+	return created.ID
+}
+
 // --- drift: spec vs server -------------------------------------------------
 
 // TestSpecClaim_StoryCreate_ProductIDInBody pins what the upstream OpenAPI
@@ -346,8 +370,11 @@ func TestServerQuirk_ClassicRoutePositionalParams(t *testing.T) {
 }
 
 // TestComment_RoundTrip is the contract for the `comment` subcommand: add an
-// HTML comment to story and epic objects through the classic action module
-// (no REST endpoint exists) and read it back from the action stream.
+// HTML comment to story, epic and bug objects through the classic action
+// module (no REST endpoint exists) and read it back from the action stream.
+// Bug comments were the known issue of the official CLI (silently dropped,
+// worked around via the bugs/confirm state endpoint) - they must work
+// through the same generic route as everything else.
 func TestComment_RoundTrip(t *testing.T) {
 	c := newClient(t)
 	productID := ensureProduct(t, c)
@@ -359,6 +386,7 @@ func TestComment_RoundTrip(t *testing.T) {
 	}{
 		{"story", createStory(t, c, productID, "comment-rt-story-"+suffix)},
 		{"epic", createEpic(t, c, productID, "comment-rt-epic-"+suffix)},
+		{"bug", createBug(t, c, productID, "comment-rt-bug-"+suffix)},
 	} {
 		html := "<p>contract comment " + suffix + " for " + tc.module + "</p>"
 		if err := c.Comment(tc.module, tc.id, html); err != nil {

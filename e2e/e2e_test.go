@@ -101,40 +101,51 @@ func TestE2E_HelpAndUnknownCommand(t *testing.T) {
 func TestE2E_CommentAddAndList(t *testing.T) {
 	env := testEnv(t)
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	module, id := "story", existingStoryID(t, env)
 
-	html := "<p>e2e inline " + suffix + "</p>"
-	if code, out, errOut := run(t, env, "", "comment", "add", module, fmt.Sprint(id), "--content", html); code != 0 {
-		t.Fatalf("comment add --content: code=%d out=%s err=%s", code, out, errOut)
-	}
+	// Story AND bug: bug comments were the known issue of the official CLI
+	// (silently dropped; the old workaround abused the bugs/confirm state
+	// endpoint). Both must round-trip through the same generic route.
+	for _, tc := range []struct {
+		module string
+		id     int
+	}{
+		{"story", existingStoryID(t, env)},
+		{"bug", provisionBug(t, env)},
+	} {
+		module, id := tc.module, tc.id
+		html := "<p>e2e inline " + suffix + " for " + module + "</p>"
+		if code, out, errOut := run(t, env, "", "comment", "add", module, fmt.Sprint(id), "--content", html); code != 0 {
+			t.Fatalf("%s comment add --content: code=%d out=%s err=%s", module, code, out, errOut)
+		}
 
-	htmlStdin := "<p>e2e stdin " + suffix + "</p>"
-	if code, out, errOut := run(t, env, htmlStdin, "comment", "add", module, fmt.Sprint(id), "--content-file", "-"); code != 0 {
-		t.Fatalf("comment add --content-file -: code=%d out=%s err=%s", code, out, errOut)
-	}
+		htmlStdin := "<p>e2e stdin " + suffix + " for " + module + "</p>"
+		if code, out, errOut := run(t, env, htmlStdin, "comment", "add", module, fmt.Sprint(id), "--content-file", "-"); code != 0 {
+			t.Fatalf("%s comment add --content-file -: code=%d out=%s err=%s", module, code, out, errOut)
+		}
 
-	code, out, errOut := run(t, env, "", "comment", "list", module, fmt.Sprint(id))
-	if code != 0 {
-		t.Fatalf("comment list: code=%d err=%s", code, errOut)
-	}
-	var listed []struct {
-		ID      int    `json:"id"`
-		Comment string `json:"comment"`
-	}
-	if err := json.Unmarshal([]byte(out), &listed); err != nil {
-		t.Fatalf("list output is not JSON: %v\n%s", err, out)
-	}
-	found := map[string]bool{}
-	for _, item := range listed {
-		for _, kind := range []string{"e2e inline ", "e2e stdin "} {
-			if strings.Contains(item.Comment, kind+suffix) {
-				found[kind] = true
+		code, out, errOut := run(t, env, "", "comment", "list", module, fmt.Sprint(id))
+		if code != 0 {
+			t.Fatalf("%s comment list: code=%d err=%s", module, code, errOut)
+		}
+		var listed []struct {
+			ID      int    `json:"id"`
+			Comment string `json:"comment"`
+		}
+		if err := json.Unmarshal([]byte(out), &listed); err != nil {
+			t.Fatalf("%s list output is not JSON: %v\n%s", module, err, out)
+		}
+		found := map[string]bool{}
+		for _, item := range listed {
+			for _, kind := range []string{"e2e inline ", "e2e stdin "} {
+				if strings.Contains(item.Comment, kind+suffix+" for "+module) {
+					found[kind] = true
+				}
 			}
 		}
-	}
-	for _, kind := range []string{"e2e inline ", "e2e stdin "} {
-		if !found[kind] {
-			t.Errorf("comment %q not returned by list", kind+suffix)
+		for _, kind := range []string{"e2e inline ", "e2e stdin "} {
+			if !found[kind] {
+				t.Errorf("%s comment %q not returned by list", module, kind+suffix)
+			}
 		}
 	}
 }
