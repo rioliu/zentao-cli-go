@@ -56,18 +56,6 @@ func TestE2E_DevFlow(t *testing.T) {
 		t.Fatalf("comment: code=%d out=%q err=%q", code, out, errOut)
 	}
 
-	// Task status flow.
-	for _, step := range [][]string{
-		{"start", "--consumed", "1", "--left", "4"},
-		{"finish", "--consumed", "1"},
-		{"close", "--comment", "<p>done</p>"},
-	} {
-		args := append([]string{"task", step[0], fmt.Sprint(taskID)}, step[1:]...)
-		if code, out, errOut := run(t, env, "", args...); code != 0 {
-			t.Fatalf("task %s: code=%d out=%q err=%q", step[0], code, out, errOut)
-		}
-	}
-
 	// Bug found in testing.
 	code, out, errOut = run(t, env, "", "bug", "create",
 		"--product", "1", "--title", "devflow-bug-"+suffix,
@@ -80,6 +68,34 @@ func TestE2E_DevFlow(t *testing.T) {
 		"--content", "<p>reproduced "+suffix+"</p>"); code != 0 {
 		t.Fatalf("bug comment: code=%d out=%q err=%q", code, out, errOut)
 	}
+	// List: created work shows up in its scopes (scoped routes only - bare
+	// list routes are unusable server-side).
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"story", "list", "--product", "1", "--json"}, "devflow-story-" + suffix},
+		{[]string{"task", "list", "--execution", fmt.Sprint(execID)}, fmt.Sprintf("#%d", taskID)},
+		{[]string{"bug", "list", "--mine"}, "devflow-bug-" + suffix},
+	} {
+		code, out, errOut := run(t, env, "", tc.args...)
+		if code != 0 || !strings.Contains(out, tc.want) {
+			t.Errorf("list %v: code=%d err=%q (want %q in output)", tc.args, code, errOut, tc.want)
+		}
+	}
+
+	// Task status flow.
+	for _, step := range [][]string{
+		{"start", "--consumed", "1", "--left", "4"},
+		{"finish", "--consumed", "1"},
+		{"close", "--comment", "<p>done</p>"},
+	} {
+		args := append([]string{"task", step[0], fmt.Sprint(taskID)}, step[1:]...)
+		if code, out, errOut := run(t, env, "", args...); code != 0 {
+			t.Fatalf("task %s: code=%d out=%q err=%q", step[0], code, out, errOut)
+		}
+	}
+
 	if code, out, errOut := run(t, env, "", "bug", "resolve", fmt.Sprint(bugID),
 		"--resolution", "fixed", "--comment", "<p>fixed</p>"); code != 0 {
 		t.Fatalf("bug resolve: code=%d out=%q err=%q", code, out, errOut)

@@ -66,6 +66,11 @@ zentao story close 14 --reason done --comment '<p>shipped</p>'
 zentao task start 5 --consumed 1 --left 4; zentao task finish 5 --consumed 2; zentao task close 5
 zentao bug resolve 12 --resolution fixed --comment '<p>fixed</p>'; zentao bug close 12
 
+# List work in a scope (default: my open items)
+zentao bug list                       # my bugs
+zentao task list --execution 2        # sprint scope
+zentao story list --product 1 --json  # raw JSON
+
 # Read any object as JSON
 zentao story get 14; zentao task get 5; zentao bug get 12
 

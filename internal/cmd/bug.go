@@ -48,6 +48,8 @@ func runBug(args []string) int {
 		return bugUpdate(rest)
 	case "get":
 		return bugGet(rest)
+	case "list":
+		return runList("bug", rest)
 	case "resolve", "confirm", "close", "activate":
 		return bugTransition(action, rest)
 	case "help", "-h", "--help":

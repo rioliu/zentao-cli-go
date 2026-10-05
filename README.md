@@ -106,6 +106,14 @@ Content is **HTML** (Zentao open source renders HTML only); use the
 `--spec-file`/`--steps-file`/`--content-file` forms for large payloads (`-`
 reads stdin). `story get` / `task get` / `bug get` print the full object JSON.
 
+List your work any time (default scope is `--mine`; `--json` for raw objects):
+
+```bash
+zentao bug list                  # my open bugs
+zentao task list --execution 2   # everything in the sprint
+zentao story list --product 1 --json | jq '.[].title'
+```
+
 ### 4. Comment as you work
 
 ```bash
@@ -193,9 +201,10 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
 | `zentao comment list <module> <id>` | list comments as JSON |
-| `zentao story create \| update \| get \| activate \| change \| close` | story lifecycle |
-| `zentao task create \| update \| get \| start \| finish \| close \| activate` | task lifecycle |
-| `zentao bug create \| update \| get \| resolve \| confirm \| close \| activate` | bug lifecycle |
+| `zentao story create \| update \| get \| list \| activate \| change \| close` | story lifecycle |
+| `zentao task create \| update \| get \| list \| start \| finish \| close \| activate` | task lifecycle |
+| `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
+| `zentao <module> list [--mine \| --product N \| --execution N \| --project N] [--json]` | list objects in a scope (default: my work) |
 | `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
 | `zentao --profile <key\|alias> <command>` | run one command against a specific profile |
 | `zentao add-skill [pi \| claude \| agents \| --dir X]` | install the bundled agent skill |

@@ -52,6 +52,8 @@ func runTask(args []string) int {
 		return taskUpdate(rest)
 	case "get":
 		return taskGet(rest)
+	case "list":
+		return runList("task", rest)
 	case "start", "finish", "close", "activate":
 		return taskTransition(action, rest)
 	case "help", "-h", "--help":

@@ -438,3 +438,87 @@ func TestBugLifecycle_RoundTrip(t *testing.T) {
 		t.Errorf("status after activate = %q, want active", got)
 	}
 }
+
+// TestList_ScopedRoutesAndBareRouteBug pins the list contract: scoped routes
+// return items, the bare routes answer 200 with an EMPTY body (same bug as
+// GET /epics?productID=). The CLI lists only through scoped routes.
+func TestList_ScopedRoutesAndBareRouteBug(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	execID := ensureExecution(t, c, productID)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	storyID := createStory(t, c, productID, "list-pin-story-"+suffix)
+	bugID := createBug(t, c, productID, "list-pin-bug-"+suffix)
+	// /my/* scopes are assignment-based: assign the fixtures to ourselves.
+	for _, tc := range []struct {
+		path string
+		id   int
+	}{
+		{fmt.Sprintf("/stories/%d", storyID), storyID},
+		{fmt.Sprintf("/bugs/%d", bugID), bugID},
+	} {
+		if _, err := c.API("PUT", tc.path, nil, map[string]any{"assignedTo": c.Account}); err != nil {
+			t.Fatalf("assign %s: %v", tc.path, err)
+		}
+	}
+	raw, err := postJSON(t, c, "/tasks", nil, map[string]any{
+		"name": "list-pin-task-" + suffix, "executionID": execID, "assignedTo": c.Account,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v (%s)", err, raw)
+	}
+	taskID, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("task create has no id: %s", raw)
+	}
+
+	containsID := func(path string, want int) bool {
+		raw, err := c.API("GET", path, nil, nil)
+		if err != nil {
+			t.Fatalf("list %s: %v (%s)", path, err, raw)
+		}
+		return strings.Contains(string(raw), fmt.Sprintf("\"id\": %d", want)) ||
+			strings.Contains(string(raw), fmt.Sprintf("\"id\":%d", want))
+	}
+
+	scoped := []struct {
+		path string
+		id   int
+	}{
+		{fmt.Sprintf("/products/%d/stories", productID), storyID},
+		{fmt.Sprintf("/products/%d/bugs", productID), bugID},
+		{fmt.Sprintf("/executions/%d/tasks", execID), taskID},
+		{"/my/stories", storyID},
+		{"/my/tasks", taskID},
+		{"/my/bugs", bugID},
+	}
+	for _, tc := range scoped {
+		if !containsID(tc.path, tc.id) {
+			t.Errorf("%s does not contain #%d (scoped route broken?)", tc.path, tc.id)
+		}
+	}
+
+	// Bare routes are not usable list endpoints (specs/overrides.yaml):
+	// /stories,/tasks,/epics answer 200 with an EMPTY body; /bugs answers a
+	// browse-context object whose "bugs" is an id-keyed map, not an array.
+	// The CLI lists only through scoped routes.
+	for _, tc := range []struct {
+		path string
+		key  string
+	}{
+		{"/stories", "stories"}, {"/tasks", "tasks"}, {"/epics", "epics"}, {"/bugs", "bugs"},
+	} {
+		raw, err := c.API("GET", tc.path, nil, nil)
+		if err != nil {
+			t.Fatalf("bare list %s: %v", tc.path, err)
+		}
+		var payload map[string]json.RawMessage
+		var items []any
+		usable := json.Unmarshal(raw, &payload) == nil && payload[tc.key] != nil &&
+			json.Unmarshal(payload[tc.key], &items) == nil && len(items) > 0
+		if usable {
+			t.Errorf("bare GET %s now returns a usable %s array - update list.go and specs/overrides.yaml", tc.path, tc.key)
+		}
+	}
+}

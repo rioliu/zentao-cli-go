@@ -48,6 +48,8 @@ func runStory(args []string) int {
 		return storyUpdate(rest)
 	case "get":
 		return storyGet(rest)
+	case "list":
+		return runList("story", rest)
 	case "activate", "change", "close":
 		return storyTransition(action, rest)
 	case "help", "-h", "--help":
