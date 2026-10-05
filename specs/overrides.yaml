@@ -1,0 +1,96 @@
+# Known divergences between specs/upstream.json and real Zentao servers.
+#
+# The upstream OpenAPI spec is generated into the zentao-api SDK registry, and
+# it does not match server behavior (verified against a live 22.4 container,
+# image easysoft/zentao:22.4-20260729). The generator must apply these rules
+# after reading the upstream spec. Every rule here is pinned by a test in
+# contract/drift_test.go - if the test goes red on a server upgrade, update
+# the rule here with the version scope.
+#
+# Version notation follows the four Zentao families compared separately:
+# opensource (22.x), biz (13.x), max (8.x), ipd (5.x).
+
+rules:
+  - id: create-productid-placement
+    applies: "POST /stories /bugs /epics /requirements /productplans (create)"
+    verified: "22.4"
+    spec_claim: productID in requestBody (required)
+    server_behavior:
+      stories: "required-param check reads QUERY only; body placement rejected: 'Missing required parameter: productID'"
+      bugs: "same as stories"
+      epics: "body placement accepted"
+      requirements: "body placement accepted"
+      productplans: "body placement accepted"
+    client_rule: >-
+      stories/bugs: send productID as a query parameter, never in the body.
+      epics/requirements/productplans: either works on 22.4; use query for
+      consistency, never both (body shadows query at the model layer).
+    upstream_prs:
+      - easysoft/zentao-api#6 (story, open since 2026-08-04)
+      - easysoft/zentao-api#3 (story+bug, open since 2026-07-17)
+
+  - id: create-productid-body-shadows-query
+    applies: "POST /stories"
+    verified: "22.4"
+    server_behavior: >-
+      with productID in both query and body, validation passes on the query
+      value but the model layer uses the BODY value (query=1 + body=999 ->
+      'Product does not exist').
+    client_rule: never send productID in both places.
+
+  - id: epic-list-empty-body
+    applies: "GET /epics?productID=N"
+    verified: "22.4"
+    server_behavior: "HTTP 200 with empty body (server bug); GET /products/{id}/epics works"
+    client_rule: always use the scoped route /products/{productID}/epics.
+
+  - id: create-response-id-field
+    applies: "POST /stories, /epics"
+    verified: "22.4"
+    server_behavior: "story create returns {id}; epic create returns no id"
+    client_rule: for epics, read the id back via the scoped list.
+
+  - id: required-fields-are-settings-dependent
+    applies: "POST /stories, /epics"
+    verified: "22.4 (installed with flow=full)"
+    server_behavior: "reviewer is required ('评审人不能为空') on this install; other installs may differ"
+    client_rule: fixtures pass reviewer=[<account>]; never assume create schemas are stable across installs.
+
+  - id: dead-token-is-302-empty
+    applies: "all /api.php/v2/* calls"
+    verified: "22.4"
+    server_behavior: >-
+      an expired/invalid token does NOT produce 401 or an error body; the
+      server answers 302 with an EMPTY body (redirect to login, payload
+      dropped). There is no refresh token: renewal means a full re-login.
+      Stateful quirk: sending a token CREATES that session and the response
+      sets it as the zentaosid cookie, so a later login riding that cookie
+      authenticates the SAME session id and returns it as the "new" token -
+      renewal may legitimately keep the id.
+    client_rule: >-
+      treat 302-with-empty-body as the session-expiry signal; renew via
+      re-login and retry the call once; assert renewal by BEHAVIOR (working
+      session), never by id rotation. See TestServerQuirk_DeadTokenIs302Empty
+      and TestSessionRenewal_Live.
+
+  - id: classic-route-positional-params
+    applies: "all /index.php?m=MODULE&f=METHOD routes"
+    verified: "22.4"
+    server_behavior: >-
+      route arguments are bound POSITIONALLY by query-string order, not by
+      name (framework/base/router.class.php). action/comment(objectType,
+      objectID) with objectID first arrives as objectType=<id> and fails with
+      a misleading 'no access permission'.
+    client_rule: emit classic-route query params in the controller signature order.
+
+  - id: comment-has-no-rest-endpoint
+    applies: "comments on any object"
+    verified: "22.4"
+    server_behavior: >-
+      no comment endpoint or field exists in the REST v2 API; comments live in
+      the classic action module: POST index.php?m=action&f=comment with
+      objectType/objectID/comment, read back via
+      GET index.php?m=action&f=ajaxGetList. Index routes need a WEB SESSION
+      (REST Token is rejected) and a matching Referer header or POST bodies
+      are silently dropped (framework/base/router.class.php).
+    client_rule: implement comment add/list via the classic routes (internal/zclient).
