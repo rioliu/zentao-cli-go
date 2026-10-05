@@ -92,9 +92,19 @@ func DefaultSessionCachePath() string {
 	if p := os.Getenv("ZENTAO_SESSION_CACHE"); p != "" {
 		return p
 	}
-	dir, err := os.UserConfigDir()
+	return filepath.Join(ConfigDir(), "sessions.json")
+}
+
+// ConfigDir returns ~/.config/zentao-cli-go (or $XDG_CONFIG_HOME/zentao-cli-go),
+// matching the documented location and the official zentao-cli convention -
+// os.UserConfigDir would put it in Library/Application Support on macOS.
+func ConfigDir() string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return filepath.Join(x, "zentao-cli-go")
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "zentao-cli-go", "sessions.json")
+	return filepath.Join(home, ".config", "zentao-cli-go")
 }

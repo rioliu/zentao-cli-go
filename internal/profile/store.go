@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
 
 // Profile is one saved connection target.
@@ -51,11 +53,11 @@ func DefaultPath() string {
 	if p := os.Getenv("ZENTAO_PROFILES"); p != "" {
 		return p
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	dir := zclient.ConfigDir()
+	if dir == "" {
 		return ""
 	}
-	return filepath.Join(dir, "zentao-cli-go", "profiles.json")
+	return filepath.Join(dir, "profiles.json")
 }
 
 // Load reads the store; a missing or corrupt file degrades to empty.

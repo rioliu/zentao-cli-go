@@ -107,4 +107,10 @@ func TestDefaultPath(t *testing.T) {
 	if p := DefaultPath(); p != "/tmp/p.json" {
 		t.Errorf("override ignored, got %q", p)
 	}
+	// Default location is the documented ~/.config/zentao-cli-go (via XDG).
+	t.Setenv("ZENTAO_PROFILES", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg")
+	if p := DefaultPath(); p != "/xdg/zentao-cli-go/profiles.json" {
+		t.Errorf("default path = %q, want /xdg/zentao-cli-go/profiles.json", p)
+	}
 }

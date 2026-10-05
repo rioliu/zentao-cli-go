@@ -62,4 +62,10 @@ func TestDefaultSessionCachePath(t *testing.T) {
 	if p := DefaultSessionCachePath(); p != "/tmp/custom.json" {
 		t.Errorf("override ignored, got %q", p)
 	}
+	// Default location is the documented ~/.config/zentao-cli-go (via XDG).
+	t.Setenv("ZENTAO_SESSION_CACHE", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg")
+	if p := DefaultSessionCachePath(); p != "/xdg/zentao-cli-go/sessions.json" {
+		t.Errorf("default path = %q, want /xdg/zentao-cli-go/sessions.json", p)
+	}
 }

@@ -53,23 +53,59 @@ contract/testenv/     disposable Zentao 22.4 test environment
 specs/                upstream spec + verified overrides
 ```
 
-## Usage
+## Step-by-step usage
+
+### 1. Install
 
 ```bash
-make build
-
-# Login once (saves the target as a profile, warms sessions):
-zentao login -s http://zentao.corp/zentao -u admin --password-stdin
-
-bin/zentao comment add story 14 --content '<p>MR: !11 merged</p>'
-echo '<p>from stdin</p>' | bin/zentao comment add bug 12 --content-file -
-bin/zentao comment list story 14
+brew install rioliu/tap/zentao-cli-go   # macOS/Linux, prebuilt binary
+zentao version                          # -> 0.1.4
 ```
 
-Comment content is HTML (Zentao open source renders HTML only). Any object
-type works (`story`, `task`, `bug`, `epic`, `testcase`, ...).
+Or from source: `make build` gives you `bin/zentao`.
 
-## Profiles (multiple Zentao instances)
+### 2. Login
+
+One command authenticates, saves the target as a profile (`account@server`)
+and warms the session cache - afterwards, commands need no credentials:
+
+```bash
+# password via stdin (recommended for scripts and agents)
+zentao login -s http://zentao.corp/zentao -u admin --password-stdin
+
+# or typed on the command line (visible in shell history)
+zentao login -s http://zentao.corp/zentao -u admin -p 'password'
+```
+
+`login` always verifies credentials **fresh** - a cached session never masks a
+wrong password. Useful options: `--as prod` saves a short alias,
+`--save-password` stores the password (0600) so expired sessions can renew
+without prompting.
+
+### 3. Add a comment
+
+Comment content is **HTML** (Zentao open source renders HTML only):
+
+```bash
+zentao comment add story 14 --content '<p>MR: !11 merged</p>'
+zentao comment add bug 12 --content-file note.html
+
+echo '<p>from stdin</p>' | zentao comment add task 5 --content-file -
+```
+
+Works for any object type: `story`, `task`, `bug`, `epic`, `requirement`,
+`testcase`, `execution`, `project`, ... Use `--content-file` or stdin for
+large HTML payloads instead of giant shell arguments.
+
+### 4. List comments
+
+```bash
+zentao comment list story 14
+```
+
+Prints a JSON array of `{"id": N, "comment": "<html>"}`.
+
+### 5. Work with multiple Zentao instances
 
 Profiles mirror the official zentao-cli semantics: the canonical key is
 **`account@server`**, the *current* profile is the one switched to most
@@ -81,20 +117,53 @@ zentao profile add --server http://localhost:8088 --account admin --as lab --sav
 
 zentao profile                 # list, current marked with *
 zentao profile lab             # switch (or: zentao profile use lab)
-zentao comment add story 14 --content '<p>hi</p>'            # against lab
-zentao --profile prod comment list story 14                  # one-off against prod
-zentao profile remove lab2
-zentao login / zentao logout   # verify creds / drop cached sessions
+
+zentao comment add story 14 --content '<p>hi</p>'     # runs against lab
+zentao --profile prod comment list story 14           # one-off against prod
+zentao profile remove lab                             # delete a profile
 ```
 
 Target selection (highest wins): `--profile` flag > `ZENTAO_PROFILE` env >
-`ZENTAO_URL`/`ZENTAO_ACCOUNT` env > current profile. Passwords: `ZENTAO_PASSWORD`
-env wins; `--save-password` stores it in the profile file (0600, opt-in) for
-password-less session renewal.
+`ZENTAO_URL`/`ZENTAO_ACCOUNT` env > current profile. Passwords:
+`ZENTAO_PASSWORD` env wins over a profile's saved password. Profiles share
+the session cache: entries are keyed `server|account`, so two profiles on the
+same account reuse the same sessions, and adding the same `account@server`
+twice updates one entry (alias and saved password are preserved).
 
-Profiles share the session cache with everyone else: entries are keyed
-`server|account`, so two profiles pointing at the same account reuse the same
-sessions, and adding the same `account@server` twice updates one entry.
+### 6. Install the skill for a coding agent (optional)
+
+```bash
+zentao add-skill pi        # Pi         (~/.pi/agent/skills)
+zentao add-skill claude    # Claude Code (~/.claude/skills)
+zentao add-skill agents    # portable    (~/.agents/skills)
+zentao add-skill --dir X   # any custom skills directory
+```
+
+The skill is a portable `SKILL.md` (agentskills.io spec). Restart the agent
+after installing.
+
+### 7. Manage sessions
+
+```bash
+zentao login               # verify the current target, re-auth on demand
+zentao logout              # drop cached sessions (the server session then
+                           # expires on its own - it is not revocable via API)
+```
+
+## Command reference
+
+| Command | Purpose |
+|---|---|
+| `zentao login [-s URL -u ACCOUNT [-p PASS \| --password-stdin]] [--as A] [--save-password]` | authenticate, save profile, warm sessions |
+| `zentao logout` | drop cached sessions |
+| `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
+| `zentao comment list <module> <id>` | list comments as JSON |
+| `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
+| `zentao --profile <key\|alias> <command>` | run one command against a specific profile |
+| `zentao add-skill [pi \| claude \| agents \| --dir X]` | install the bundled agent skill |
+| `zentao version` | print version |
+
+Exit codes: **0** success, **1** runtime/auth failure, **2** usage error.
 
 ## Session lifecycle
 
