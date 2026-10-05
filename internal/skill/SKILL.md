@@ -17,7 +17,8 @@ Zentao instances via profiles.
 
 ## When to use
 
-- Adding comments/备注/留言 to Zentao objects (any type: story, task, bug, epic, ...)
+- Creating stories and driving their status (activate/close)
+- Adding comments/评论/备注/留言 to Zentao objects (any type: story, task, bug, epic, ...)
 - Listing comments on an object
 - Switching between Zentao instances (profiles)
 - Checking login/credentials work
@@ -52,7 +53,15 @@ zentao login -s http://zentao.corp/zentao -u admin --password-stdin   # safe for
 zentao login -s http://zentao.corp/zentao -u admin -p PASS            # human use (visible in history)
 zentao login                          # verify the currently resolved target
 
-# Add a comment (content is HTML - Zentao open source renders HTML only)
+# Create a story and drive its status
+zentao story create --product 1 --title 'Fix login timeout' \
+  --spec '<p>description</p>' --verify '<p>acceptance criteria</p>' --reviewer admin
+zentao story activate 14 --comment '<p>starting</p>'   # reviewing -> active
+zentao story close 14 --reason done --comment '<p>shipped</p>'   # -> closed
+zentao story update 14 --spec '<p>updated</p>'
+zentao story get 14                                  # full story as JSON
+
+# Comments (HTML only - Zentao open source renders HTML only)
 zentao comment add story 14 --content '<p>Done, MR: !11 merged</p>'
 zentao comment add bug 12 --content-file note.html
 echo '<p>from stdin</p>' | zentao comment add task 5 --content-file -

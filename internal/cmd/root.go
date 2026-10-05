@@ -20,6 +20,10 @@ Usage:
   zentao [--profile <key|alias>] comment add <module> <id> --content '<html>'
   zentao [--profile <key|alias>] comment add <module> <id> --content-file F   ('-' = stdin)
   zentao [--profile <key|alias>] comment list <module> <id>
+  zentao [--profile <key|alias>] story create --product N --title T [options]
+  zentao [--profile <key|alias>] story update <id> [options]
+  zentao [--profile <key|alias>] story get <id>
+  zentao [--profile <key|alias>] story activate|change|close <id> [options]
   zentao profile [ ... ]            manage/switch connection profiles
   zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin]
                                         authenticate, warm sessions, save profile
@@ -130,6 +134,8 @@ func Execute() int {
 	switch args[0] {
 	case "comment":
 		return runComment(args[1:])
+	case "story":
+		return runStory(args[1:])
 	case "profile":
 		return runProfile(args[1:])
 	case "login":

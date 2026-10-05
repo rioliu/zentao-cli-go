@@ -82,7 +82,19 @@ wrong password. Useful options: `--as prod` saves a short alias,
 `--save-password` stores the password (0600) so expired sessions can renew
 without prompting.
 
-### 3. Add a comment
+### 3. Create a story
+
+```bash
+zentao story create --product 1 --title 'Fix login timeout' \
+  --spec '<p>Users are logged out after 5 minutes...</p>' \
+  --verify '<p>Session survives 30 minutes of activity</p>' \
+  --reviewer admin
+```
+
+New stories start in `reviewing` (with a reviewer) or `wait`. Use
+`--spec-file`/`--verify-file` for large HTML (`-` reads stdin).
+
+### 4. Add a comment
 
 Comment content is **HTML** (Zentao open source renders HTML only):
 
@@ -91,21 +103,30 @@ zentao comment add story 14 --content '<p>MR: !11 merged</p>'
 zentao comment add bug 12 --content-file note.html
 
 echo '<p>from stdin</p>' | zentao comment add task 5 --content-file -
+zentao comment list story 14     # JSON: [{"id": N, "comment": "<html>"}]
 ```
 
 Works for any object type: `story`, `task`, `bug`, `epic`, `requirement`,
 `testcase`, `execution`, `project`, ... Use `--content-file` or stdin for
 large HTML payloads instead of giant shell arguments.
 
-### 4. List comments
+### 5. Update status
 
 ```bash
-zentao comment list story 14
+zentao story activate 14 --comment '<p>starting work</p>'   # reviewing -> active
+zentao story close 14 --reason done --comment '<p>shipped</p>'  # -> closed
+zentao story get 14          # verify: full story as JSON
 ```
 
-Prints a JSON array of `{"id": N, "comment": "<html>"}`.
+Status flow: `create` -> `reviewing` -> (`activate`) -> `active` ->
+(`close`) -> `closed`. Closing requires `--reason`; the comment lands in the
+story's action stream alongside the status change. Update fields any time:
 
-### 5. Work with multiple Zentao instances
+```bash
+zentao story update 14 --spec '<p>updated description</p>' --verify '<p>...</p>'
+```
+
+### 6. Work with multiple Zentao instances
 
 Profiles mirror the official zentao-cli semantics: the canonical key is
 **`account@server`**, the *current* profile is the one switched to most
@@ -130,7 +151,7 @@ the session cache: entries are keyed `server|account`, so two profiles on the
 same account reuse the same sessions, and adding the same `account@server`
 twice updates one entry (alias and saved password are preserved).
 
-### 6. Install the skill for a coding agent (optional)
+### 7. Install the skill for a coding agent (optional)
 
 ```bash
 zentao add-skill pi        # Pi         (~/.pi/agent/skills)
@@ -142,7 +163,7 @@ zentao add-skill --dir X   # any custom skills directory
 The skill is a portable `SKILL.md` (agentskills.io spec). Restart the agent
 after installing.
 
-### 7. Manage sessions
+### 8. Manage sessions
 
 ```bash
 zentao login               # verify the current target, re-auth on demand
@@ -158,6 +179,10 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
 | `zentao comment list <module> <id>` | list comments as JSON |
+| `zentao story create --product N --title T [options]` | create a story (--spec, --verify, --reviewer, ...) |
+| `zentao story update <id> [options]` | update story fields (partial updates OK) |
+| `zentao story get <id>` | read a story as JSON |
+| `zentao story activate \| change \| close <id>` | status transitions (close needs --reason) |
 | `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
 | `zentao --profile <key\|alias> <command>` | run one command against a specific profile |
 | `zentao add-skill [pi \| claude \| agents \| --dir X]` | install the bundled agent skill |

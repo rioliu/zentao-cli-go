@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,5 +167,103 @@ func TestSessionRenewal_Live(t *testing.T) {
 	c2.AttachSessionCache(cachePath)
 	if _, err := c2.API("GET", "/products", nil, nil); err != nil {
 		t.Errorf("persisted session unusable for a fresh client: %v", err)
+	}
+}
+
+// TestStoryLifecycle_RoundTrip is the founding-bug regression: story create
+// and update once silently DROPPED spec/verify (they are missing from the
+// upstream OpenAPI update schema). Every step asserts persistence by
+// read-back, including the status flow create -> reviewing -> active -> closed.
+func TestStoryLifecycle_RoundTrip(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	// Create: productID must be a QUERY parameter (specs/overrides.yaml).
+	raw, err := postJSON(t, c, "/stories", url.Values{"productID": {fmt.Sprint(productID)}},
+		map[string]any{
+			"title":    "lifecycle-" + suffix,
+			"reviewer": []string{c.Account},
+			"spec":     "<p>spec-content " + suffix + "</p>",
+			"verify":   "<p>verify-content " + suffix + "</p>",
+		})
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, raw)
+	}
+	var created struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &created); err != nil || created.ID == 0 {
+		t.Fatalf("create response has no id: %s", raw)
+	}
+	id := created.ID
+
+	readBack := func() map[string]any {
+		raw, err := c.API("GET", fmt.Sprintf("/stories/%d", id), nil, nil)
+		if err != nil {
+			t.Fatalf("get: %v (%s)", err, raw)
+		}
+		var wrapped struct {
+			Story map[string]any `json:"story"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Story == nil {
+			t.Fatalf("get response has no story: %s", raw)
+		}
+		return wrapped.Story
+	}
+
+	story := readBack()
+	if !strings.Contains(fmt.Sprint(story["spec"]), suffix) {
+		t.Errorf("spec silently dropped on create: %v", story["spec"])
+	}
+	if !strings.Contains(fmt.Sprint(story["verify"]), suffix) {
+		t.Errorf("verify silently dropped on create: %v", story["verify"])
+	}
+
+	// Partial update: only spec/verify (the fields the spec omits).
+	if _, err := c.API("PUT", fmt.Sprintf("/stories/%d", id), nil, map[string]any{
+		"spec":   "<p>spec-updated " + suffix + "</p>",
+		"verify": "<p>verify-updated " + suffix + "</p>",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	story = readBack()
+	if !strings.Contains(fmt.Sprint(story["spec"]), "spec-updated "+suffix) {
+		t.Errorf("spec silently dropped on update: %v", story["spec"])
+	}
+	if !strings.Contains(fmt.Sprint(story["verify"]), "verify-updated "+suffix) {
+		t.Errorf("verify silently dropped on update: %v", story["verify"])
+	}
+
+	// Status flow: reviewing -> active -> closed.
+	if _, err := c.API("POST", fmt.Sprintf("/stories/%d/activate", id), nil,
+		map[string]any{"comment": "<p>starting " + suffix + "</p>"}); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if got := fmt.Sprint(readBack()["status"]); got != "active" {
+		t.Errorf("status after activate = %q, want active", got)
+	}
+
+	// Close requires closedReason (undeclared in the spec); the comment must
+	// land in the action stream.
+	if _, err := c.API("POST", fmt.Sprintf("/stories/%d/close", id), nil,
+		map[string]any{"closedReason": "done", "comment": "<p>closing " + suffix + "</p>"}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got := fmt.Sprint(readBack()["status"]); got != "closed" {
+		t.Errorf("status after close = %q, want closed", got)
+	}
+	actions, err := c.Comments("story", id)
+	if err != nil {
+		t.Fatalf("action stream: %v", err)
+	}
+	found := false
+	for _, a := range actions {
+		if strings.Contains(a.Comment, "closing "+suffix) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("close comment not found in action stream %v", actions)
 	}
 }
