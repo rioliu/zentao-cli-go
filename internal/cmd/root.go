@@ -21,6 +21,7 @@ Usage:
   zentao profile [ ... ]            manage/switch connection profiles
   zentao login                      verify credentials, warm the session cache
   zentao logout                     drop cached sessions
+  zentao add-skill [agent]          install the bundled skill for a coding agent
   zentao version                    print version
 
 Target selection (highest wins):
@@ -132,6 +133,8 @@ func Execute() int {
 		return runLogin()
 	case "logout":
 		return runLogout()
+	case "add-skill":
+		return runAddSkill(args[1:])
 	case "version":
 		fmt.Println(Version)
 		return 0

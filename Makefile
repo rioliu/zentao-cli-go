@@ -1,6 +1,8 @@
 BIN := bin/zentao
+VERSION ?= $(shell git describe --tags --always)
+DIST := dist
 
-.PHONY: build vet test test-unit test-contract test-e2e regression testenv-up testenv-down
+.PHONY: build vet test test-unit test-contract test-e2e regression testenv-up testenv-down release install-skill
 
 build:
 	go build -o $(BIN) ./cmd/zentao
@@ -26,6 +28,24 @@ test-e2e:
 # Full regression: everything that must stay green before shipping a change.
 regression: vet build test-unit test-contract test-e2e
 	@echo "REGRESSION OK"
+
+# Cross-compiled release tarballs for the homebrew formula (and GitHub releases).
+release: vet test-unit
+	rm -rf $(DIST) && mkdir -p $(DIST)
+	@for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do \
+		os=$${target%/*}; arch=$${target#*/}; \
+		echo "[build] $$os/$$arch"; \
+		out=$$(mktemp -d); \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '-s -w' -o $$out/zentao ./cmd/zentao; \
+		tar -czf $(DIST)/zentao-cli-go_$(VERSION)_$${os}_$${arch}.tar.gz -C $$out zentao; \
+		rm -rf $$out; \
+	done
+	@ls -la $(DIST)
+	@shasum -a 256 $(DIST)/*.tar.gz
+
+# Install the bundled skill into a coding agent (pi, claude, or portable agents dir).
+install-skill: build
+	$(BIN) add-skill pi
 
 # Bring up a disposable Zentao matching production (22.4) and print env exports.
 testenv-up:

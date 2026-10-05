@@ -228,6 +228,28 @@ func TestE2E_SessionCacheReuse(t *testing.T) {
 	}
 }
 
+// TestE2E_AddSkill pins skill installation: content lands intact in the
+// requested location with portable frontmatter.
+func TestE2E_AddSkill(t *testing.T) {
+	dir := t.TempDir()
+	if code, out, errOut := run(t, os.Environ(), "", "add-skill", "--dir", dir); code != 0 {
+		t.Fatalf("add-skill: code=%d out=%q err=%q", code, out, errOut)
+	}
+	buf, err := os.ReadFile(dir + "/zentao-cli-go/SKILL.md")
+	if err != nil {
+		t.Fatalf("skill not installed: %v", err)
+	}
+	text := string(buf)
+	if !strings.Contains(text, "name: zentao-cli-go") || !strings.Contains(text, "comment add") {
+		t.Error("installed skill content incomplete")
+	}
+
+	// Unknown agent is a usage error, never a silent fallback.
+	if code, _, _ := run(t, os.Environ(), "", "add-skill", "frobnicagent"); code != 2 {
+		t.Errorf("unknown agent should exit 2, got %d", code)
+	}
+}
+
 // existingStoryID provisions a story fixture (via the REST client) and
 // returns its id. All assertions in this ring go through the CLI binary.
 func existingStoryID(t *testing.T, env []string) int {
