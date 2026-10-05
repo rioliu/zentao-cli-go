@@ -21,8 +21,9 @@ Usage:
   zentao [--profile <key|alias>] comment add <module> <id> --content-file F   ('-' = stdin)
   zentao [--profile <key|alias>] comment list <module> <id>
   zentao profile [ ... ]            manage/switch connection profiles
-  zentao login                      verify credentials, warm the session cache
-  zentao logout                     drop cached sessions
+  zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin]
+                                        authenticate, warm sessions, save profile
+  zentao logout                       drop cached sessions
   zentao add-skill [agent]          install the bundled skill for a coding agent
   zentao version                    print version
 
@@ -132,7 +133,7 @@ func Execute() int {
 	case "profile":
 		return runProfile(args[1:])
 	case "login":
-		return runLogin()
+		return runLogin(args[1:])
 	case "logout":
 		return runLogout()
 	case "add-skill":

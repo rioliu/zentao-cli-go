@@ -87,6 +87,18 @@ func (c *Client) Login() error {
 	return c.freshLogin()
 }
 
+// ForceLogin performs a full credential check against both realms, ignoring
+// any cached sessions. This is what `login` uses: verifying the supplied
+// credentials must never be masked by a still-valid cached session.
+func (c *Client) ForceLogin() error {
+	c.Token = ""
+	c.webUp = false
+	if err := c.freshLogin(); err != nil {
+		return err
+	}
+	return c.webLogin()
+}
+
 // freshLogin performs a full REST login and persists the new session.
 func (c *Client) freshLogin() error {
 	if c.Password == "" {

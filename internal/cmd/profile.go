@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/rioliu/zentao-cli-go/internal/profile"
 )
@@ -137,33 +136,5 @@ func profileSwitch(ref string) int {
 		return 1
 	}
 	fmt.Printf("current profile: %s (account=%s)\n", p.Key(), p.Account)
-	return 0
-}
-
-// runLogin verifies the resolved credentials now and warms the session cache.
-func runLogin() int {
-	c, err := newClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		return 1
-	}
-	if err := c.Login(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		return 1
-	}
-	fmt.Printf("logged in to %s as %s\n", c.BaseURL, c.Account)
-	return 0
-}
-
-// runLogout drops cached sessions for the resolved profile. The server-side
-// session itself is not revocable through the API; it expires on its own.
-func runLogout() int {
-	c, err := newClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		return 1
-	}
-	c.Forget()
-	fmt.Printf("sessions dropped for %s (server session expires on its own)\n", strings.TrimRight(c.BaseURL, "/"))
 	return 0
 }

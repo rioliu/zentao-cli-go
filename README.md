@@ -58,9 +58,8 @@ specs/                upstream spec + verified overrides
 ```bash
 make build
 
-export ZENTAO_URL=http://zentao.example.com/zentao
-export ZENTAO_ACCOUNT=admin
-export ZENTAO_PASSWORD=...
+# Login once (saves the target as a profile, warms sessions):
+zentao login -s http://zentao.corp/zentao -u admin --password-stdin
 
 bin/zentao comment add story 14 --content '<p>MR: !11 merged</p>'
 echo '<p>from stdin</p>' | bin/zentao comment add bug 12 --content-file -

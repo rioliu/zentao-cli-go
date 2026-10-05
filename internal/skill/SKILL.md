@@ -46,6 +46,12 @@ themselves in their terminal.
 ## Commands
 
 ```bash
+# Login: authenticates, saves the target as a profile (account@server),
+# warms the session cache. Subsequent commands need no credentials.
+zentao login -s http://zentao.corp/zentao -u admin --password-stdin   # safe for scripts/agents
+zentao login -s http://zentao.corp/zentao -u admin -p PASS            # human use (visible in history)
+zentao login                          # verify the currently resolved target
+
 # Add a comment (content is HTML - Zentao open source renders HTML only)
 zentao comment add story 14 --content '<p>Done, MR: !11 merged</p>'
 zentao comment add bug 12 --content-file note.html
