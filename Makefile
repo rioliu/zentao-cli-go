@@ -32,18 +32,23 @@ regression: vet build test-unit test-contract test-e2e
 # Cross-compiled release tarballs for the homebrew formula (and GitHub releases).
 release: vet test-unit
 	rm -rf $(DIST) && mkdir -p $(DIST)
-	@for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do \
+	@for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64 windows/arm64; do \
 		os=$${target%/*}; arch=$${target#*/}; \
 		echo "[build] $$os/$$arch"; \
 		out=$$(mktemp -d); \
+		if [ "$$os" = "windows" ]; then bin=zentao.exe; else bin=zentao; fi; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
 			-ldflags "-s -w -X github.com/rioliu/zentao-cli-go/internal/cmd.Version=$(VERSION:v%=%)" \
-			-o $$out/zentao ./cmd/zentao; \
-		tar -czf $(DIST)/zentao-cli-go_$(VERSION)_$${os}_$${arch}.tar.gz -C $$out zentao; \
+			-o $$out/$$bin ./cmd/zentao; \
+		if [ "$$os" = "windows" ]; then \
+			zip -jq $(DIST)/zentao-cli-go_$(VERSION)_$${os}_$${arch}.zip $$out/$$bin; \
+		else \
+			tar -czf $(DIST)/zentao-cli-go_$(VERSION)_$${os}_$${arch}.tar.gz -C $$out $$bin; \
+		fi; \
 		rm -rf $$out; \
 	done
 	@ls -la $(DIST)
-	@shasum -a 256 $(DIST)/*.tar.gz
+	@shasum -a 256 $(DIST)/*
 
 # Install the bundled skill into a coding agent (pi, claude, or portable agents dir).
 install-skill: build

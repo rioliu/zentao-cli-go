@@ -57,9 +57,22 @@ specs/                upstream spec + verified overrides
 
 ### 1. Install
 
+macOS/Linux (Homebrew):
+
 ```bash
-brew install rioliu/tap/zentao-cli-go   # macOS/Linux, prebuilt binary
-zentao version                          # -> 0.1.4
+brew install rioliu/tap/zentao-cli-go   # prebuilt binary
+zentao version                          # -> 0.4.0
+```
+
+Windows (zip from GitHub releases):
+
+```powershell
+# PowerShell, amd64 example - pick the asset matching your architecture
+# (asset names embed the version; grab the current URL from the releases page)
+Invoke-WebRequest https://github.com/rioliu/zentao-cli-go/releases/download/v0.4.0/zentao-cli-go_v0.4.0_windows_amd64.zip -OutFile zentao.zip
+Expand-Archive zentao.zip -DestinationPath $env:LOCALAPPDATA\Programs\zentao
+# add that directory to your PATH, then:
+zentao version
 ```
 
 Or from source: `make build` gives you `bin/zentao`.
