@@ -99,6 +99,8 @@ without prompting.
 
 The development loop in Zentao terms: a **story** captures the requirement,
 **tasks** are the development work under it, **bugs** are what testing finds.
+Story/bug creation needs a product ID - discover it with `zentao product list`
+(`--json` for scripts), or `zentao product get <id>` for the full object.
 
 ```bash
 # Story: the requirement
@@ -217,6 +219,7 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao story create \| update \| get \| list \| activate \| change \| close` | story lifecycle |
 | `zentao task create \| update \| get \| list \| start \| finish \| close \| activate` | task lifecycle |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
+| `zentao product list [--page N] [--json]` \| `zentao product get <id>` | discover product IDs for `--product` on story/bug create |
 | `zentao <module> list [--mine \| --product N \| --execution N \| --project N] [--json]` | list objects in a scope (default: my work) |
 | `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
 | `zentao --profile <key\|alias> <command>` | run one command against a specific profile |

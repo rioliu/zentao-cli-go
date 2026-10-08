@@ -55,6 +55,9 @@ zentao login -s http://zentao.corp/zentao -u admin -p PASS            # human us
 zentao login                          # verify the currently resolved target
 
 # The development loop: story > task > bug
+# Product IDs first (story/bug create need --product)
+zentao product list                 # one line per product: #id  name  code  status
+zentao product get 2                # full product object as JSON
 zentao story create --product 1 --title 'Fix login timeout' \
   --spec '<p>description</p>' --verify '<p>acceptance</p>' --reviewer admin
 zentao task create --execution 2 --name 'Rework sessions' --story 14 --assigned-to dev1
@@ -72,7 +75,7 @@ zentao task list --execution 2        # sprint scope
 zentao story list --product 1 --json  # raw JSON
 
 # Read any object as JSON
-zentao story get 14; zentao task get 5; zentao bug get 12
+zentao story get 14; zentao task get 5; zentao bug get 12; zentao product get 2
 
 # Comments (HTML only - Zentao open source renders HTML only)
 zentao comment add story 14 --content '<p>Done, MR: !11 merged</p>'
