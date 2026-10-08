@@ -102,7 +102,7 @@ func (c *Client) ForceLogin() error {
 // freshLogin performs a full REST login and persists the new session.
 func (c *Client) freshLogin() error {
 	if c.Password == "" {
-		return fmt.Errorf("no usable session and no password available: session expired? set ZENTAO_PASSWORD to enable automatic re-login")
+		return fmt.Errorf("no usable session and no password available: session expired? set ZENTAO_PASSWORD to re-login or provide a fresh token (ZENTAO_TOKEN / zentao login --token)")
 	}
 	var out struct {
 		Status string `json:"status"`
@@ -129,6 +129,67 @@ func (c *Client) freshLogin() error {
 func (c *Client) renewToken() error {
 	c.Token = ""
 	return c.freshLogin()
+}
+
+// VerifyToken proves the current REST token against the server WITHOUT
+// renewing it. Any response other than the dead-session signature (302 with
+// an empty body, 401, login-timeout payload) means the token authenticates:
+// permission problems and validation errors still prove a live session.
+func (c *Client) VerifyToken() error {
+	if c.Token == "" {
+		return fmt.Errorf("no token available")
+	}
+	status, raw, err := c.apiDo("GET", "/users", url.Values{"recPerPage": {"1"}}, nil)
+	if err != nil {
+		return err
+	}
+	if isRestAuthFailure(status, raw) {
+		return fmt.Errorf("token rejected by %s (expired or invalid)", strings.TrimRight(c.BaseURL, "/"))
+	}
+	return nil
+}
+
+// AdoptToken installs an externally obtained token (login --token): it is
+// verified against the server BEFORE it is persisted in the session cache.
+// A rejected token leaves the previous session untouched, on disk and in
+// memory.
+func (c *Client) AdoptToken(tok string) error {
+	prev := c.Token
+	c.Token = tok
+	if err := c.VerifyToken(); err != nil {
+		c.Token = prev
+		return err
+	}
+	c.persistCache()
+	return nil
+}
+
+// EnsureToken returns a REST token that is authorized right now, minting or
+// renewing as needed - the primitive behind `zentao token`. With fresh, any
+// cached or supplied token is discarded and a new one is minted via password
+// login. Without a password an expired token cannot be renewed and yields a
+// clear error instead of a silently dead token.
+func (c *Client) EnsureToken(fresh bool) (string, error) {
+	if fresh {
+		c.Token = ""
+	}
+	if c.Token == "" {
+		if err := c.freshLogin(); err != nil {
+			return "", err
+		}
+		return c.Token, nil
+	}
+	if err := c.VerifyToken(); err == nil {
+		return c.Token, nil
+	}
+	if c.Password == "" {
+		return "", fmt.Errorf("token rejected by server (expired or invalid) and no password available to renew: run 'zentao login' or set ZENTAO_PASSWORD / ZENTAO_TOKEN")
+	}
+	c.Token = ""
+	if err := c.freshLogin(); err != nil {
+		return "", err
+	}
+	return c.Token, nil
 }
 
 // AttachSessionCache enables session reuse across CLI invocations. The REST
@@ -367,6 +428,9 @@ func (c *Client) WebProbe(path string, query [][2]string, formKey, formValue str
 func (c *Client) webLogin() error {
 	if c.webUp {
 		return nil
+	}
+	if c.Password == "" {
+		return fmt.Errorf("web session requires a password: the classic web realm does not accept API tokens; set ZENTAO_PASSWORD or log in with a password")
 	}
 	form := url.Values{"account": {c.Account}, "password": {c.Password}}
 	resp, err := c.webPost("/index.php?m=user&f=login", nil, form)

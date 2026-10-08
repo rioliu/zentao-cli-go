@@ -26,11 +26,15 @@ Zentao instances via profiles.
 
 ## Authentication
 
-Two ways, both handled by the CLI internally:
+Three ways, all handled by the CLI internally:
 
 1. Environment: `ZENTAO_URL`, `ZENTAO_ACCOUNT`, `ZENTAO_PASSWORD`
 2. Profiles: `zentao profile add --server URL --account NAME --as alias --save-password`
    then commands run against the current profile (or `--profile <alias>`)
+3. Token: `ZENTAO_TOKEN` env (or `zentao login --token TOKEN`) - a REST API
+   token instead of a password; `zentao token` prints an authorized one.
+   Tokens cannot renew themselves (no password -> expired token is a hard
+   error) and cannot reach the web realm (comment commands need a password).
 
 Never collect credentials interactively in the conversation. If the user is not
 set up yet, ask them to run `zentao profile add ...` or set the env vars
@@ -42,6 +46,7 @@ themselves in their terminal.
   (`~/.config/zentao-cli-go/sessions.json`, `~/.config/zentao-cli-go/profiles.json`).
   They hold live session credentials and possibly saved passwords.
 - Never pass passwords on the command line; use env vars or `--save-password`.
+  Same for tokens: prefer `ZENTAO_TOKEN` env over `--token` in shared shells.
 - All Zentao data must be obtained through the `zentao` CLI, not by
   manipulating its credential storage.
 
@@ -52,7 +57,9 @@ themselves in their terminal.
 # warms the session cache. Subsequent commands need no credentials.
 zentao login -s http://zentao.corp/zentao -u admin --password-stdin   # safe for scripts/agents
 zentao login -s http://zentao.corp/zentao -u admin -p PASS            # human use (visible in history)
+zentao login -s http://zentao.corp/zentao -u admin --token "$TOKEN"   # token auth, no password
 zentao login                          # verify the currently resolved target
+zentao token                          # print an authorized REST API token (CI)
 
 # The development loop: story > task > bug
 # Product IDs first (story/bug create need --product)
@@ -93,6 +100,7 @@ zentao --profile <alias> comment list story 14   # one-off target
 
 # Session management
 zentao login                         # verify credentials, warm session cache
+zentao token                         # print an authorized REST API token
 zentao logout                        # drop cached sessions
 ```
 

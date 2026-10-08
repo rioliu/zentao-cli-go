@@ -14,7 +14,8 @@ func cleanProfileEnv(t *testing.T) []string {
 	env := []string{}
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "ZENTAO_URL=") || strings.HasPrefix(kv, "ZENTAO_ACCOUNT=") ||
-			strings.HasPrefix(kv, "ZENTAO_PASSWORD=") || strings.HasPrefix(kv, "ZENTAO_PROFILE=") {
+			strings.HasPrefix(kv, "ZENTAO_PASSWORD=") || strings.HasPrefix(kv, "ZENTAO_PROFILE=") ||
+			strings.HasPrefix(kv, "ZENTAO_TOKEN=") {
 			continue
 		}
 		env = append(env, kv)

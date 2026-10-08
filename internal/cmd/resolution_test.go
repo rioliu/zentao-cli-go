@@ -30,7 +30,34 @@ func reset(t *testing.T) {
 	t.Setenv("ZENTAO_URL", "")
 	t.Setenv("ZENTAO_ACCOUNT", "")
 	t.Setenv("ZENTAO_PASSWORD", "")
+	t.Setenv("ZENTAO_TOKEN", "")
 	t.Setenv("ZENTAO_PROFILE", "")
+}
+
+func TestResolveCredentials_EnvToken(t *testing.T) {
+	withProfiles(t)
+	reset(t)
+
+	// ZENTAO_TOKEN is returned alongside the target from every source.
+	t.Setenv("ZENTAO_TOKEN", "env-token")
+	server, _, _, tok, err := resolveCredentials()
+	if err != nil || server != "http://lab.example" || tok != "env-token" {
+		t.Errorf("current profile target: %v server=%q token=%q", err, server, tok)
+	}
+
+	t.Setenv("ZENTAO_PROFILE", "prod")
+	_, _, _, tok, err = resolveCredentials()
+	if err != nil || tok != "env-token" {
+		t.Errorf("profile target: %v token=%q", err, tok)
+	}
+
+	// Without ZENTAO_TOKEN the returned token is empty (profiles carry none:
+	// tokens live in the session cache, not the profile file).
+	t.Setenv("ZENTAO_TOKEN", "")
+	_, _, _, tok, _ = resolveCredentials()
+	if tok != "" {
+		t.Errorf("expected empty token, got %q", tok)
+	}
 }
 
 func TestResolveCredentials_Precedence(t *testing.T) {
@@ -39,7 +66,7 @@ func TestResolveCredentials_Precedence(t *testing.T) {
 
 	// 1. --profile flag beats everything.
 	flagProfileRef = "lab"
-	server, account, _, err := resolveCredentials()
+	server, account, _, _, err := resolveCredentials()
 	if err != nil || server != "http://lab.example" || account != "tester" {
 		t.Errorf("flag profile: %v %s %s", err, server, account)
 	}
@@ -47,7 +74,7 @@ func TestResolveCredentials_Precedence(t *testing.T) {
 	// 2. ZENTAO_PROFILE env beats env target and current profile.
 	flagProfileRef = ""
 	t.Setenv("ZENTAO_PROFILE", "prod")
-	server, account, _, err = resolveCredentials()
+	server, account, _, _, err = resolveCredentials()
 	if err != nil || server != "http://prod.example" {
 		t.Errorf("env profile: %v %s", err, server)
 	}
@@ -56,7 +83,7 @@ func TestResolveCredentials_Precedence(t *testing.T) {
 	t.Setenv("ZENTAO_PROFILE", "")
 	t.Setenv("ZENTAO_URL", "http://direct.example")
 	t.Setenv("ZENTAO_ACCOUNT", "root")
-	server, account, _, err = resolveCredentials()
+	server, account, _, _, err = resolveCredentials()
 	if err != nil || server != "http://direct.example" || account != "root" {
 		t.Errorf("env target: %v %s %s", err, server, account)
 	}
@@ -64,7 +91,7 @@ func TestResolveCredentials_Precedence(t *testing.T) {
 	// 4. Current profile when nothing explicit.
 	t.Setenv("ZENTAO_URL", "")
 	t.Setenv("ZENTAO_ACCOUNT", "")
-	server, account, _, err = resolveCredentials()
+	server, account, _, _, err = resolveCredentials()
 	if err != nil || server != "http://lab.example" { // lab was added last -> current
 		t.Errorf("current profile: %v %s", err, server)
 	}
@@ -76,14 +103,14 @@ func TestResolveCredentials_PasswordSources(t *testing.T) {
 
 	// Saved password is used when no env password is set.
 	flagProfileRef = "prod"
-	_, _, pw, err := resolveCredentials()
+	_, _, pw, _, err := resolveCredentials()
 	if err != nil || pw != "savedpw" {
 		t.Errorf("saved password: %v %q", err, pw)
 	}
 
 	// ZENTAO_PASSWORD wins over the saved one.
 	t.Setenv("ZENTAO_PASSWORD", "envpw")
-	_, _, pw, _ = resolveCredentials()
+	_, _, pw, _, _ = resolveCredentials()
 	if pw != "envpw" {
 		t.Errorf("env password should win, got %q", pw)
 	}
@@ -91,7 +118,7 @@ func TestResolveCredentials_PasswordSources(t *testing.T) {
 	// No password anywhere is allowed (sessions may still be cached).
 	flagProfileRef = "lab"
 	t.Setenv("ZENTAO_PASSWORD", "")
-	_, _, pw, _ = resolveCredentials()
+	_, _, pw, _, _ = resolveCredentials()
 	if pw != "" {
 		t.Errorf("expected empty password for lab, got %q", pw)
 	}
@@ -101,7 +128,7 @@ func TestResolveCredentials_UnknownProfileErrors(t *testing.T) {
 	withProfiles(t)
 	reset(t)
 	t.Setenv("ZENTAO_PROFILE", "nope")
-	if _, _, _, err := resolveCredentials(); err == nil {
+	if _, _, _, _, err := resolveCredentials(); err == nil {
 		t.Error("unknown profile must error, not silently fall through")
 	}
 }
