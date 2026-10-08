@@ -388,8 +388,10 @@ func (c *Client) Comment(objectType string, objectID int, html string) error {
 	})
 }
 
-// Comments returns the action stream of an object; entries created by
-// Comment carry Action == "commented" and hold the HTML in Comment.
+// Comments returns the action stream of an object. Entries created by
+// Comment carry Action == "commented" and hold the HTML in Comment; other
+// actions may also carry comment text (e.g. a task's finish note on
+// Action == "finished") - callers decide which entries count as comments.
 func (c *Client) Comments(objectType string, objectID int) ([]Action, error) {
 	if err := c.webLogin(); err != nil {
 		return nil, err

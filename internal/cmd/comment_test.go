@@ -3,6 +3,8 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 	"testing"
 )
 
@@ -64,5 +66,47 @@ func TestRunComment_RejectsUnknownModule(t *testing.T) {
 	// catch the typo before anything is sent.
 	if code := runComment([]string{"add", "notamodule", "1", "--content", "<p>x</p>"}); code != 2 {
 		t.Errorf("unknown module should exit 2, got %d", code)
+	}
+}
+
+// comment list must return every action-stream entry that carries comment
+// text: true comments (action=commented) AND embedded remarks such as a
+// task's finish note (action=finished, commentEditable). Pure history
+// entries (comment == "") stay excluded. Regression: task 21's finish remark
+// was invisible because the filter only accepted action=="commented".
+func TestCommentEntries_IncludesFinishRemarks(t *testing.T) {
+	actions := []zclient.Action{
+		{ID: 332, Action: "opened"},
+		{ID: 333, Action: "assigned"},
+		{ID: 340, Action: "finished", Comment: "Cachey monitoring implemented: ..."},
+		{ID: 288, Action: "commented", Comment: "<p>real comment</p>"},
+		{ID: 707, Action: "edited"},
+	}
+	got := commentEntries(actions)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 comment-bearing entries, got %d: %v", len(got), got)
+	}
+	want := []struct {
+		id     int
+		action string
+	}{
+		{340, "finished"},
+		{288, "commented"},
+	}
+	for i, w := range want {
+		if got[i]["id"] != w.id || got[i]["action"] != w.action {
+			t.Errorf("entry %d = {id:%v action:%v}, want {id:%d action:%s}",
+				i, got[i]["id"], got[i]["action"], w.id, w.action)
+		}
+		if got[i]["comment"] == "" {
+			t.Errorf("entry %d lost its comment text", i)
+		}
+	}
+}
+
+func TestCommentEntries_EmptyHistoryOnly(t *testing.T) {
+	got := commentEntries([]zclient.Action{{ID: 1, Action: "opened"}, {ID: 2, Action: "edited"}})
+	if len(got) != 0 {
+		t.Errorf("history-only stream must yield [], got %v", got)
 	}
 }

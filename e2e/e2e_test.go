@@ -155,7 +155,10 @@ func TestE2E_CommentAddAndList(t *testing.T) {
 // 1 for runtime/config failures.
 func TestE2E_UsageExitCodes(t *testing.T) {
 	env := testEnv(t)
-	noEnv := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "ZENTAO_NO_CACHE=1"}
+	// Isolate HOME: the "missing env config" case must find NO profile. With
+	// the developer's real HOME it would resolve their saved profile (and
+	// saved password) and silently query a live server instead of failing.
+	noEnv := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "ZENTAO_NO_CACHE=1"}
 
 	for _, tc := range []struct {
 		name     string

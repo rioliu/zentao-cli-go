@@ -88,16 +88,25 @@ func commentList(module string, id int) int {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
-	out := make([]map[string]any, 0)
-	for _, a := range actions {
-		if a.Action != "commented" {
-			continue
-		}
-		out = append(out, map[string]any{"id": a.ID, "comment": a.Comment})
-	}
+	out := commentEntries(actions)
 	buf, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(buf))
 	return 0
+}
+
+// commentEntries selects the action-stream entries that carry comment text.
+// True comments (action=commented) and embedded remarks - notably a task's
+// finish note (action=finished, commentEditable) - both count; pure history
+// entries carry no comment text and are excluded.
+func commentEntries(actions []zclient.Action) []map[string]any {
+	out := make([]map[string]any, 0)
+	for _, a := range actions {
+		if a.Comment == "" {
+			continue
+		}
+		out = append(out, map[string]any{"id": a.ID, "action": a.Action, "comment": a.Comment})
+	}
+	return out
 }
 
 // resolveContent picks the comment body from --content, --content-file or stdin.

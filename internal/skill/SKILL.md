@@ -111,7 +111,8 @@ feedback, ticket, user, program, doc, file.
 ## Behavior contract
 
 - Exit codes: 0 success, 1 runtime/auth failure, 2 usage error
-- `comment list` prints a JSON array of `{"id": N, "comment": "<html>"}`
+- `comment list` prints a JSON array of `{"id": N, "action": "...", "comment": "<html>"}`
+  (includes finish/close remarks, not only `action=commented` entries)
 - Comment content must be HTML (`<p>...</p>`); markdown is not rendered
 - Bug comments work through the same route as everything else - the old
   official-CLI workaround (abusing `bugs/{id}/confirm`) is obsolete and must
