@@ -145,7 +145,7 @@ zentao story list --product 1 --json | jq '.[].title'
 zentao comment add story 14 --content '<p>MR: !11 merged</p>'
 zentao comment add task 5 --content '<p>blocked on API keys</p>'
 zentao comment add bug 12 --content-file note.html
-zentao comment list story 14     # JSON: [{"id": N, "comment": "<html>"}]
+zentao comment list story 14     # JSON: [{"id": N, "action": "commented", "comment": "<html>"}]
 ```
 
 Works for any object type: `story`, `task`, `bug`, `epic`, `requirement`,
@@ -231,7 +231,7 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao token [--fresh]` | print an authorized REST API token (for CI) |
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
-| `zentao comment list <module> <id>` | list comments as JSON |
+| `zentao comment list <module> <id>` | list comment text as JSON (real comments + finish/close remarks) |
 | `zentao story create \| update \| get \| list \| activate \| change \| close` | story lifecycle |
 | `zentao task create \| update \| get \| list \| start \| finish \| close \| activate` | task lifecycle |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
