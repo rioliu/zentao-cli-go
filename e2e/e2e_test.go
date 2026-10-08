@@ -53,6 +53,7 @@ func testEnv(t *testing.T) []string {
 		"ZENTAO_URL="+base,
 		"ZENTAO_ACCOUNT="+account,
 		"ZENTAO_PASSWORD="+password,
+		"ZENTAO_TOKEN=", // never inherit the developer's token
 		"ZENTAO_SESSION_CACHE="+filepath.Join(t.TempDir(), "sessions.json"),
 	)
 }

@@ -88,12 +88,22 @@ zentao login -s http://zentao.corp/zentao -u admin --password-stdin
 
 # or typed on the command line (visible in shell history)
 zentao login -s http://zentao.corp/zentao -u admin -p 'password'
+
+# token auth (CI-friendly): verified against the server, no password involved
+zentao login -s http://zentao.corp/zentao -u admin --token "$TOKEN"
 ```
 
 `login` always verifies credentials **fresh** - a cached session never masks a
 wrong password. Useful options: `--as prod` saves a short alias,
 `--save-password` stores the password (0600) so expired sessions can renew
 without prompting.
+
+**Token auth.** `--token TOKEN` (or the `ZENTAO_TOKEN` env var) replaces the
+password with a REST API token: it is verified against the server, then stored
+in the session cache (0600), and `ZENTAO_TOKEN` outranks the cache on every
+run. Get a token with `zentao token` (see §8). Two limits: a token cannot be
+renewed without a password source, and the classic web realm (comments) still
+needs account+password - token-only setups get an explicit error there.
 
 ### 3. Create: story > task > bug
 
@@ -183,7 +193,9 @@ zentao profile remove lab                             # delete a profile
 
 Target selection (highest wins): `--profile` flag > `ZENTAO_PROFILE` env >
 `ZENTAO_URL`/`ZENTAO_ACCOUNT` env > current profile. Passwords:
-`ZENTAO_PASSWORD` env wins over a profile's saved password. Profiles share
+`ZENTAO_PASSWORD` env wins over a profile's saved password. Tokens:
+`ZENTAO_TOKEN` env wins over the session cache; profiles never store tokens
+(adopted tokens live in the session cache). Profiles share
 the session cache: entries are keyed `server|account`, so two profiles on the
 same account reuse the same sessions, and adding the same `account@server`
 twice updates one entry (alias and saved password are preserved).
@@ -204,6 +216,9 @@ after installing.
 
 ```bash
 zentao login               # verify the current target, re-auth on demand
+zentao token               # print an authorized REST API token
+                           # CI: TOKEN=$(zentao token)
+zentao token --fresh       # mint a new token (needs a password source)
 zentao logout              # drop cached sessions (the server session then
                            # expires on its own - it is not revocable via API)
 ```
@@ -212,7 +227,8 @@ zentao logout              # drop cached sessions (the server session then
 
 | Command | Purpose |
 |---|---|
-| `zentao login [-s URL -u ACCOUNT [-p PASS \| --password-stdin]] [--as A] [--save-password]` | authenticate, save profile, warm sessions |
+| `zentao login [-s URL -u ACCOUNT [-p PASS \| --password-stdin \| --token TOKEN]] [--as A] [--save-password]` | authenticate, save profile, warm sessions |
+| `zentao token [--fresh]` | print an authorized REST API token (for CI) |
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
 | `zentao comment list <module> <id>` | list comments as JSON |
@@ -239,13 +255,14 @@ proven dead, renew lazily**:
 2. A call that fails with the expiry signature (REST: `302` empty body; web:
    login-timeout response) triggers a **transparent re-login and one retry**
    with the fresh session, which is then cached
-3. Renewal needs a password source (`ZENTAO_PASSWORD`); without one the error
-   says so explicitly instead of failing mysteriously
+3. Renewal needs a credential source (`ZENTAO_PASSWORD`, or a fresh token via
+   `ZENTAO_TOKEN` / `zentao login --token`); without one the error says so
+   explicitly instead of failing mysteriously
 
 Controls: `ZENTAO_NO_CACHE=1` disables caching; `ZENTAO_SESSION_CACHE=<path>`
 overrides the file location. v0 currently authenticates from
-`ZENTAO_URL`/`ZENTAO_ACCOUNT`/`ZENTAO_PASSWORD` env on every run when no cache
-is warm - the cache simply removes those logins.
+`ZENTAO_URL`/`ZENTAO_ACCOUNT`/`ZENTAO_PASSWORD` (or `ZENTAO_TOKEN`) env on
+every run when no cache is warm - the cache simply removes those logins.
 
 ## Test environment
 

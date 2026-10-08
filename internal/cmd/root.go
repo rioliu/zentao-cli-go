@@ -29,8 +29,9 @@ Usage:
   zentao [--profile <key|alias>] product list [--page N] [--json]
   zentao [--profile <key|alias>] product get <id>
   zentao profile [ ... ]            manage/switch connection profiles
-  zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin]
+  zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin | --token TOKEN]
                                         authenticate, warm sessions, save profile
+  zentao token [--fresh]            print an authorized REST API token (for CI)
   zentao logout                       drop cached sessions
   zentao add-skill [agent]          install the bundled skill for a coding agent
   zentao version                    print version
@@ -40,6 +41,7 @@ Target selection (highest wins):
 
 Environment:
   ZENTAO_URL / ZENTAO_ACCOUNT / ZENTAO_PASSWORD   direct target (no profile needed)
+  ZENTAO_TOKEN / zentao login --token             password-free REST token auth
   ZENTAO_SESSION_CACHE / ZENTAO_NO_CACHE          session cache control
   ZENTAO_PROFILES / ZENTAO_NO_PROFILE             profile file control
 
@@ -51,7 +53,7 @@ var flagProfileRef string
 
 // newClient builds a client for the resolved target (profile or env).
 func newClient() (*zclient.Client, error) {
-	server, account, password, err := resolveCredentials()
+	server, account, password, token, err := resolveCredentials()
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +63,11 @@ func newClient() (*zclient.Client, error) {
 	c := zclient.New(server, account, password)
 	if path := zclient.DefaultSessionCachePath(); path != "" {
 		c.AttachSessionCache(path)
+	}
+	// ZENTAO_TOKEN outranks the cached session: the env var is an explicit
+	// credential from the caller (CI), the cache is only a local snapshot.
+	if token != "" {
+		c.Token = token
 	}
 	return c, nil
 }
@@ -73,7 +80,10 @@ func newClient() (*zclient.Client, error) {
 //
 // The password comes from ZENTAO_PASSWORD when set (env wins), otherwise from
 // the profile's saved password; it may be empty while cached sessions live.
-func resolveCredentials() (server, account, password string, err error) {
+// The token comes from ZENTAO_TOKEN (env only - profiles store no token;
+// adopted tokens live in the session cache) and may be empty.
+func resolveCredentials() (server, account, password, token string, err error) {
+	token = os.Getenv("ZENTAO_TOKEN")
 	ref := flagProfileRef
 	if ref == "" {
 		ref = os.Getenv("ZENTAO_PROFILE")
@@ -82,17 +92,17 @@ func resolveCredentials() (server, account, password string, err error) {
 		s := profile.Load(profile.DefaultPath())
 		p, err := s.Get(ref)
 		if err != nil {
-			return "", "", "", err
+			return "", "", "", "", err
 		}
 		pw := p.Password
 		if env := os.Getenv("ZENTAO_PASSWORD"); env != "" {
 			pw = env
 		}
-		return p.Server, p.Account, pw, nil
+		return p.Server, p.Account, pw, token, nil
 	}
 
 	if server, account = os.Getenv("ZENTAO_URL"), os.Getenv("ZENTAO_ACCOUNT"); server != "" && account != "" {
-		return server, account, os.Getenv("ZENTAO_PASSWORD"), nil
+		return server, account, os.Getenv("ZENTAO_PASSWORD"), token, nil
 	}
 
 	if path := profile.DefaultPath(); path != "" {
@@ -102,10 +112,10 @@ func resolveCredentials() (server, account, password string, err error) {
 			if env := os.Getenv("ZENTAO_PASSWORD"); env != "" {
 				pw = env
 			}
-			return p.Server, p.Account, pw, nil
+			return p.Server, p.Account, pw, token, nil
 		}
 	}
-	return "", "", "", nil
+	return "", "", "", token, nil
 }
 
 // extractProfileFlag pulls the global --profile <ref> / --profile=<ref> out
@@ -150,6 +160,8 @@ func Execute() int {
 		return runProfile(args[1:])
 	case "login":
 		return runLogin(args[1:])
+	case "token":
+		return runToken(args[1:])
 	case "logout":
 		return runLogout()
 	case "add-skill":

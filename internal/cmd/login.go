@@ -14,6 +14,7 @@ import (
 const loginUsage = `Usage:
   zentao login [-s URL] [-u ACCOUNT] [-p PASSWORD] [--as alias] [--save-password]
   zentao login [-s URL] [-u ACCOUNT] --password-stdin [--save-password]
+  zentao login [-s URL] [-u ACCOUNT] --token TOKEN [--as alias]
 
 Authenticates against Zentao, warms the session cache, and saves the target as
 a profile (account@server) so subsequent commands run against it.
@@ -24,6 +25,9 @@ Options:
   -p, --password PASS     account password (visible in shell history - prefer
                           ZENTAO_PASSWORD or --password-stdin)
       --password-stdin    read the password from stdin (safe for scripts)
+      --token TOKEN       authenticate with a REST API token instead of a
+                          password (verified, then stored in the session cache;
+                          also available as ZENTAO_TOKEN)
       --as alias          short alias for the saved profile
       --save-password     also store the password in the profile file (0600)
 
@@ -45,9 +49,25 @@ func runLogin(args []string) int {
 	fs.StringVar(&password, "password", "", "account password")
 	passwordStdin := fs.Bool("password-stdin", false, "read the password from stdin")
 	savePassword := fs.Bool("save-password", false, "store the password in the profile file")
+	tokenFlag := fs.String("token", "", "REST API token (alternative to a password)")
 	as := fs.String("as", "", "short alias for the saved profile")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	// Token auth is mutually exclusive with every password input/storage flag.
+	if *tokenFlag != "" {
+		if password != "" {
+			fmt.Fprintln(os.Stderr, "ERROR: use either --token or --password, not both")
+			return 2
+		}
+		if *passwordStdin {
+			fmt.Fprintln(os.Stderr, "ERROR: use either --token or --password-stdin, not both")
+			return 2
+		}
+		if *savePassword {
+			fmt.Fprintln(os.Stderr, "ERROR: --token cannot be combined with --save-password")
+			return 2
+		}
 	}
 	if *passwordStdin {
 		if password != "" {
@@ -67,6 +87,7 @@ func runLogin(args []string) int {
 	}
 
 	// Explicit flags build a fresh target; otherwise verify the resolved one.
+	token := *tokenFlag
 	if server != "" || account != "" {
 		if server == "" || account == "" {
 			fmt.Fprintln(os.Stderr, "ERROR: --server and --account must be used together")
@@ -75,8 +96,11 @@ func runLogin(args []string) int {
 		if password == "" {
 			password = os.Getenv("ZENTAO_PASSWORD")
 		}
+		if token == "" {
+			token = os.Getenv("ZENTAO_TOKEN")
+		}
 	} else {
-		resolvedServer, resolvedAccount, resolvedPassword, err := resolveCredentials()
+		resolvedServer, resolvedAccount, resolvedPassword, resolvedToken, err := resolveCredentials()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			return 1
@@ -86,9 +110,18 @@ func runLogin(args []string) int {
 			return 2
 		}
 		server, account, password = resolvedServer, resolvedAccount, resolvedPassword
+		if token == "" {
+			token = resolvedToken
+		}
+	}
+
+	// Token auth wins when explicitly requested (--token) or when it is the
+	// only credential available (env token, no password).
+	if token != "" && (*tokenFlag != "" || password == "") {
+		return runTokenLogin(server, account, password, token, *as)
 	}
 	if password == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: no password: use -p, --password-stdin, or ZENTAO_PASSWORD")
+		fmt.Fprintln(os.Stderr, "ERROR: no password: use -p, --password-stdin, ZENTAO_PASSWORD, --token, or ZENTAO_TOKEN")
 		return 2
 	}
 
@@ -127,6 +160,48 @@ func runLogin(args []string) int {
 		saved = fmt.Sprintf(", profile saved: %s", key)
 	}
 	fmt.Printf("logged in to %s as %s%s\n", strings.TrimRight(server, "/"), account, saved)
+	return 0
+}
+
+// runTokenLogin verifies an externally obtained token (login --token or
+// ZENTAO_TOKEN) and saves the target. The token replaces the password as the
+// REST credential and is persisted in the session cache; the profile keeps
+// only server/account/alias plus any previously saved password. The classic
+// web realm (comments) is NOT reachable with a token, so it is not checked
+// here - it fails later with a clear error when no password is available.
+func runTokenLogin(server, account, password, token, alias string) int {
+	c := zclient.New(server, account, password)
+	cachePath := zclient.DefaultSessionCachePath()
+	if cachePath != "" {
+		c.AttachSessionCache(cachePath)
+	}
+	if err := c.AdoptToken(token); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+
+	saved := ""
+	if path := profile.DefaultPath(); path != "" {
+		s := profile.Load(path)
+		p := profile.Profile{Server: server, Account: account, Alias: alias}
+		if existing, err := s.Get(p.Key()); err == nil {
+			if p.Alias == "" {
+				p.Alias = existing.Alias
+			}
+			p.Password = existing.Password // never touched by token login
+		}
+		key, err := s.Add(p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: saving profile: %v\n", err)
+			return 1
+		}
+		saved = fmt.Sprintf(", profile saved: %s", key)
+	}
+	note := ""
+	if cachePath == "" {
+		note = " (session cache disabled: token not persisted; export ZENTAO_TOKEN to reuse)"
+	}
+	fmt.Printf("logged in to %s as %s via token%s%s\n", strings.TrimRight(server, "/"), account, saved, note)
 	return 0
 }
 
