@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +285,84 @@ func TestStoryLifecycle_RoundTrip(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("close comment not found in action stream %v", actions)
+	}
+}
+
+// readStory fetches a story and returns its object for assertions.
+func readStory(t *testing.T, c *zclient.Client, id int) map[string]any {
+	t.Helper()
+	raw, err := c.API("GET", fmt.Sprintf("/stories/%d", id), nil, nil)
+	if err != nil {
+		t.Fatalf("get story %d: %v (%s)", id, err, raw)
+	}
+	var wrapped struct {
+		Story map[string]any `json:"story"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Story == nil {
+		t.Fatalf("get story %d: no story in response: %s", id, raw)
+	}
+	return wrapped.Story
+}
+
+// intOf reads a JSON number/string id field; non-numeric values read as 0.
+func intOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case string:
+		id, _ := strconv.Atoi(n)
+		return id
+	default:
+		return 0
+	}
+}
+
+// TestStoryChild_ParentPersisted pins the parent/child story hierarchy:
+// POST /stories accepts the spec's "parent" (父需求) field and the server
+// persists it, flipping the parent's isParent flag. This is what
+// `zentao story create --parent N` relies on (specs/upstream.json declares
+// the field; only this test proves the server honors it).
+func TestStoryChild_ParentPersisted(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	parentID := createStory(t, c, productID, "parent-"+suffix)
+
+	// Child on create: parent rides the body (productID stays in the query).
+	raw, err := postJSON(t, c, "/stories", url.Values{"productID": {fmt.Sprint(productID)}},
+		map[string]any{"title": "child-" + suffix, "reviewer": []string{c.Account}, "parent": parentID})
+	if err != nil {
+		t.Fatalf("create child: %v (%s)", err, raw)
+	}
+	childID, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("child create response has no id: %s", raw)
+	}
+
+	child := readStory(t, c, childID)
+	if got := intOf(child["parent"]); got != parentID {
+		t.Errorf("child parent = %d, want %d (server dropped the parent field): %v", got, parentID, child)
+	}
+	if got := intOf(readStory(t, c, parentID)["isParent"]); got != 1 {
+		t.Errorf("parent isParent = %d, want 1 after child attached", got)
+	}
+
+	// Reparent on update: PUT /stories/{id} declares parent too.
+	otherID := createStory(t, c, productID, "other-parent-"+suffix)
+	if _, err := c.API("PUT", fmt.Sprintf("/stories/%d", childID), nil, map[string]any{"parent": otherID}); err != nil {
+		t.Fatalf("reparent: %v", err)
+	}
+	if got := intOf(readStory(t, c, childID)["parent"]); got != otherID {
+		t.Errorf("child parent after PUT = %d, want %d", got, otherID)
+	}
+
+	// Teardown: close the fixtures so reruns start clean.
+	for _, id := range []int{childID, parentID, otherID} {
+		if _, err := c.API("POST", fmt.Sprintf("/stories/%d/close", id), nil,
+			map[string]any{"closedReason": "done"}); err != nil {
+			t.Errorf("close %d: %v", id, err)
+		}
 	}
 }
 

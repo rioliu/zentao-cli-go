@@ -67,6 +67,7 @@ zentao product list                 # one line per product: #id  name  code  sta
 zentao product get 2                # full product object as JSON
 zentao story create --product 1 --title 'Fix login timeout' \
   --spec '<p>description</p>' --verify '<p>acceptance</p>' --reviewer admin
+zentao story create --product 1 --title 'Child story' --parent 14   # child story
 zentao task create --execution 2 --name 'Rework sessions' --story 14 --assigned-to dev1
 zentao bug create --product 1 --title 'Session dies on refresh' --steps '<p>1. ...</p>'
 

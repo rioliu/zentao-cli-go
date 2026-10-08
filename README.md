@@ -118,6 +118,10 @@ zentao story create --product 1 --title 'Fix login timeout' \
   --spec '<p>Users are logged out after 5 minutes...</p>' \
   --verify '<p>Session survives 30 minutes of activity</p>' --reviewer admin
 
+# Child story: --parent attaches it to a parent story (subtask breakdown)
+zentao story create --product 1 --title 'Fix login timeout details' \
+  --parent 14 --reviewer admin
+
 # Task: the work, linked to the story (tasks live under an execution/sprint)
 zentao task create --execution 2 --name 'Rework session handling' \
   --story 14 --assigned-to dev1 --estimate 8
