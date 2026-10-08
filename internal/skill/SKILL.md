@@ -73,6 +73,7 @@ zentao bug create --product 1 --title 'Session dies on refresh' --steps '<p>1. .
 # Status flows
 zentao story activate 14 --comment '<p>starting</p>'
 zentao story close 14 --reason done --comment '<p>shipped</p>'
+zentao story update 14 --status draft    # raw status write: draft|reviewing|active|changing|closed
 zentao task start 5 --consumed 1 --left 4; zentao task finish 5 --consumed 2; zentao task close 5
 zentao bug resolve 12 --resolution fixed --comment '<p>fixed</p>'; zentao bug close 12
 
@@ -120,6 +121,9 @@ feedback, ticket, user, program, doc, file.
 - For large content use `--content-file` or stdin, never giant argv strings
 - Unknown modules are rejected client-side (the server would silently orphan
   the comment)
+- `story update --status` is a raw status write validated client-side; for
+  active/closed prefer `story activate` / `story close`, which record history
+  and handle close reason/stage
 
 ## Known caveats (server-side)
 

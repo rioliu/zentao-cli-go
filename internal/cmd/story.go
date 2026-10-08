@@ -5,13 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 const storyUsage = `Usage:
   zentao story create --product N --title T [options]
-  zentao story update <id> [options]
+  zentao story update <id> [--status S] [options]
   zentao story get <id>
   zentao story activate <id> [--comment HTML | --comment-file F]
   zentao story change <id>  [--comment HTML | --comment-file F]
@@ -27,6 +28,11 @@ Create/update options:
   --pri N                priority (1-4)
   --category C           feature | story | ...
   --source S             requirement source
+
+Update-only options:
+  --status S             story status: draft | reviewing | active | changing |
+                         closed (raw write; for active/closed prefer
+                         activate/close - they record history and close metadata)
 
 Content is HTML. Large payloads: use the --*-file forms, not giant argv.
 Status flow: create -> reviewing -> (activate) -> active -> (close) -> closed.`
@@ -60,6 +66,12 @@ func runStory(args []string) int {
 		return 2
 	}
 }
+
+// storyStatuses are the status values the server's story edit form accepts
+// (module/story/config/form.php form->edit['status']; lang statusList). The
+// REST spec omits the field, but the server persists it - same pass-through
+// as spec/verify.
+var storyStatuses = []string{"draft", "reviewing", "active", "changing", "closed"}
 
 // storyFields registers the common field flags and returns pointers.
 type storyFields struct {
@@ -188,6 +200,7 @@ func storyUpdate(args []string) int {
 	fs := flag.NewFlagSet("story update", flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, storyUsage) }
 	fields := registerStoryFields(fs)
+	status := fs.String("status", "", "story status (draft|reviewing|active|changing|closed)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -195,6 +208,13 @@ func storyUpdate(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 2
+	}
+	if *status != "" {
+		if !slices.Contains(storyStatuses, *status) {
+			fmt.Fprintf(os.Stderr, "ERROR: invalid --status %q (want %s)\n", *status, strings.Join(storyStatuses, "|"))
+			return 2
+		}
+		body["status"] = *status
 	}
 	if *fields.product != 0 {
 		fmt.Fprintln(os.Stderr, "ERROR: --product is only used at create time")

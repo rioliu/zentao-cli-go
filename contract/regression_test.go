@@ -235,6 +235,25 @@ func TestStoryLifecycle_RoundTrip(t *testing.T) {
 		t.Errorf("verify silently dropped on update: %v", story["verify"])
 	}
 
+	// Status via PUT: form->edit carries status (config/form.php) but the spec
+	// omits it - the server must persist it like spec/verify. Write a value
+	// different from the current one, then restore, so the flow below starts
+	// from the exact state create left behind.
+	origStatus := fmt.Sprint(story["status"])
+	wantStatus := "draft"
+	if origStatus == wantStatus {
+		wantStatus = "reviewing"
+	}
+	if _, err := c.API("PUT", fmt.Sprintf("/stories/%d", id), nil, map[string]any{"status": wantStatus}); err != nil {
+		t.Fatalf("status update: %v", err)
+	}
+	if got := fmt.Sprint(readBack()["status"]); got != wantStatus {
+		t.Errorf("status after PUT = %q, want %q (server dropped the undeclared field)", got, wantStatus)
+	}
+	if _, err := c.API("PUT", fmt.Sprintf("/stories/%d", id), nil, map[string]any{"status": origStatus}); err != nil {
+		t.Fatalf("status restore: %v", err)
+	}
+
 	// Status flow: reviewing -> active -> closed.
 	if _, err := c.API("POST", fmt.Sprintf("/stories/%d/activate", id), nil,
 		map[string]any{"comment": "<p>starting " + suffix + "</p>"}); err != nil {
