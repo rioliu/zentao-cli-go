@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,6 +264,68 @@ func TestE2E_AddSkill(t *testing.T) {
 	// Unknown agent is a usage error, never a silent fallback.
 	if code, _, _ := run(t, os.Environ(), "", "add-skill", "frobnicagent"); code != 2 {
 		t.Errorf("unknown agent should exit 2, got %d", code)
+	}
+}
+
+// intOf reads a JSON number/string id field; non-numeric values read as 0.
+func intOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case string:
+		id, _ := strconv.Atoi(n)
+		return id
+	default:
+		return 0
+	}
+}
+
+// TestE2E_StoryCreateChild pins the --parent flag end to end: the binary
+// creates a child story under a provisioned parent, and the server must
+// persist the link (read back through the REST fixture client).
+func TestE2E_StoryCreateChild(t *testing.T) {
+	env := testEnv(t)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	c := fixtureClient(t)
+	productID := ensureFixtureProduct(t, c)
+	parentID := provisionStory(t, env)
+
+	// Create the child through the CLI binary - this is the surface under test.
+	// reviewer rides along because this install requires it (overrides.yaml:
+	// required-fields-are-settings-dependent).
+	code, out, errOut := run(t, env, "",
+		"story", "create", "--product", fmt.Sprint(productID),
+		"--title", "e2e-child-"+suffix, "--parent", fmt.Sprint(parentID),
+		"--reviewer", c.Account)
+	if code != 0 {
+		t.Fatalf("story create --parent: code=%d out=%q err=%q", code, out, errOut)
+	}
+	var created struct{ ID int `json:"id"` }
+	if _, err := fmt.Sscanf(out, "story #%d created", &created.ID); err != nil || created.ID == 0 {
+		t.Fatalf("cannot parse created id from %q", out)
+	}
+
+	// Server-side truth: the link persisted, the parent is a parent now.
+	raw, err := c.API("GET", fmt.Sprintf("/stories/%d", created.ID), nil, nil)
+	if err != nil {
+		t.Fatalf("read child: %v (%s)", err, raw)
+	}
+	var wrapped struct {
+		Story map[string]any `json:"story"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Story == nil {
+		t.Fatalf("read child: bad response %s", raw)
+	}
+	if intOf(wrapped.Story["parent"]) != parentID {
+		t.Errorf("child parent = %v, want %d", wrapped.Story["parent"], parentID)
+	}
+
+	// Teardown through the CLI as well.
+	for _, id := range []int{created.ID, parentID} {
+		if code, _, errOut := run(t, env, "", "story", "close", fmt.Sprint(id), "--reason", "done"); code != 0 {
+			t.Errorf("close %d: code=%d err=%q", id, code, errOut)
+		}
 	}
 }
 

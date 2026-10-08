@@ -28,6 +28,7 @@ Create/update options:
   --pri N                priority (1-4)
   --category C           feature | story | ...
   --source S             requirement source
+  --parent N             parent story ID (create a child story)
 
 Update-only options:
   --status S             story status: draft | reviewing | active | changing |
@@ -86,6 +87,7 @@ type storyFields struct {
 	pri        *int
 	category   *string
 	source     *string
+	parent     *int
 }
 
 func registerStoryFields(fs *flag.FlagSet) *storyFields {
@@ -101,6 +103,7 @@ func registerStoryFields(fs *flag.FlagSet) *storyFields {
 		pri:        fs.Int("pri", 0, "priority 1-4"),
 		category:   fs.String("category", "", "category (feature, ...)"),
 		source:     fs.String("source", "", "requirement source"),
+		parent:     fs.Int("parent", 0, "parent story ID"),
 	}
 	return f
 }
@@ -140,6 +143,9 @@ func (f *storyFields) buildFields() (map[string]any, error) {
 	}
 	set("category", "--category", *f.category)
 	set("source", "--source", *f.source)
+	if *f.parent != 0 {
+		body["parent"] = *f.parent
+	}
 	return body, nil
 }
 
