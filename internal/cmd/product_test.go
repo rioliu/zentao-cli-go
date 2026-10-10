@@ -56,3 +56,39 @@ func TestRenderProducts_BadJSON(t *testing.T) {
 		t.Error("non-array payload should be an error")
 	}
 }
+
+// pagerState must read the NESTED {"pager":{...}} object. A flat object
+// yields zeros - exactly the shape that once killed the pagination hints.
+func TestPagerState(t *testing.T) {
+	raw := []byte(`{"status":"success","products":[],"pager":{"recTotal":33,"recPerPage":15,"pageID":1}}`)
+	pageID, recPerPage, recTotal := pagerState(raw)
+	if pageID != 1 || recPerPage != 15 || recTotal != 33 {
+		t.Errorf("pagerState = %d/%d/%d, want 1/15/33", pageID, recPerPage, recTotal)
+	}
+	// Flat (wrong shape) and missing pagers both read as zeros.
+	for _, in := range []string{
+		`{"recTotal":33,"recPerPage":15,"pageID":1}`,
+		`{"status":"success","products":[]}`,
+		`not json`,
+	} {
+		if p, r, t2 := pagerState([]byte(in)); p != 0 || r != 0 || t2 != 0 {
+			t.Errorf("pagerState(%s) = %d/%d/%d, want 0/0/0", in, p, r, t2)
+		}
+	}
+}
+
+// The hint fires only when the current page is not the last one.
+func TestPagerHintCondition(t *testing.T) {
+	hint := func(pageID, recPerPage, recTotal int) bool {
+		return recPerPage > 0 && pageID*recPerPage < recTotal
+	}
+	if !hint(1, 15, 33) {
+		t.Error("page 1 of 3 must hint")
+	}
+	if hint(1, 15, 15) {
+		t.Error("the only page must not hint")
+	}
+	if hint(1, 0, 100) {
+		t.Error("unknown recPerPage must not hint")
+	}
+}

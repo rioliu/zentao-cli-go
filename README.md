@@ -101,7 +101,7 @@ without prompting.
 **Token auth.** `--token TOKEN` (or the `ZENTAO_TOKEN` env var) replaces the
 password with a REST API token: it is verified against the server, then stored
 in the session cache (0600), and `ZENTAO_TOKEN` outranks the cache on every
-run. Get a token with `zentao token` (see §8). Two limits: a token cannot be
+run. Get a token with `zentao token` (see §9). Two limits: a token cannot be
 renewed without a password source, and the classic web realm (comments) still
 needs account+password - token-only setups get an explicit error there.
 
@@ -177,7 +177,49 @@ Fields can be updated at any point (`zentao story update 14 --spec '...'`,
 Notes passed with `--comment` land in the object's action stream alongside the
 status change.
 
-### 6. Work with multiple Zentao instances
+### 6. Plan: projects, sprints, links and dashboards
+
+Projects hold products and stories; sprints (executions) are created under a
+project. The REST API creates neither the default sprint nor any story links,
+and a project created WITHOUT `--product` makes the server invent a new
+product named after it - the CLI refuses that.
+
+```bash
+# Projects - the product binding is mandatory
+zentao project create --name 'Apollo' --product 3 \
+  --model scrum --begin 2026-10-10 --end 2027-01-09 --acl open
+zentao project list                 # #id  name  type  status
+zentao project get 11
+
+# Story membership. The server silently skips stories in draft/reviewing/
+# closed status and answers success anyway - link-story warns per story and
+# verifies the result by reading the list back (nonzero exit if incomplete).
+zentao project link-story 11 --stories 36,41
+zentao story list --project 11
+zentao project unlink-story 11 --story 36
+
+# Sprint under a project (--product recommended: a product-less sprint
+# cannot link stories)
+zentao execution create --project 11 --name 'S1-1010' \
+  --begin 2026-10-10 --end 2026-11-01 --product 3
+
+# Related stories (关联需求): maintains BOTH the linkStories field and the
+# relation rows the view tab reads - either alone is half a link
+zentao story link 36 --with 41,52
+zentao story unlink 36 --with 41
+
+# Moving a task repairs two verified server bugs on the way
+# (the move zeroes task.story; task.project goes stale)
+zentao task move 5 --execution 13
+zentao task delete 5
+
+# Dashboards read precomputed metric records; installs without a scheduler
+# never refresh them - recompute after bulk story/task changes
+zentao metric update-dashboard
+zentao metric update-lib           # warns about partial server-side errors
+```
+
+### 7. Work with multiple Zentao instances
 
 Profiles mirror the official zentao-cli semantics: the canonical key is
 **`account@server`**, the *current* profile is the one switched to most
@@ -204,7 +246,7 @@ the session cache: entries are keyed `server|account`, so two profiles on the
 same account reuse the same sessions, and adding the same `account@server`
 twice updates one entry (alias and saved password are preserved).
 
-### 7. Install the skill for a coding agent (optional)
+### 8. Install the skill for a coding agent (optional)
 
 ```bash
 zentao add-skill pi        # Pi         (~/.pi/agent/skills)
@@ -216,7 +258,7 @@ zentao add-skill --dir X   # any custom skills directory
 The skill is a portable `SKILL.md` (agentskills.io spec). Restart the agent
 after installing.
 
-### 8. Manage sessions
+### 9. Manage sessions
 
 ```bash
 zentao login               # verify the current target, re-auth on demand
@@ -236,10 +278,14 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao logout` | drop cached sessions |
 | `zentao comment add <module> <id> --content HTML \| --content-file F` | add a comment (F = `-` reads stdin) |
 | `zentao comment list <module> <id>` | list comment text as JSON (real comments + finish/close remarks) |
-| `zentao story create \| update \| get \| list \| activate \| change \| close` | story lifecycle |
-| `zentao task create \| update \| get \| list \| start \| finish \| close \| activate` | task lifecycle |
+| `zentao story create \| update \| get \| list \| link \| unlink \| activate \| change \| close` | story lifecycle (link/unlink keeps field + relation rows in sync) |
+| `zentao task create \| update \| get \| list \| move \| delete \| start \| finish \| close \| activate` | task lifecycle (`move` repairs the story-zeroing/stale-project server bugs) |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
 | `zentao product list [--page N] [--json]` \| `zentao product get <id>` | discover product IDs for `--product` on story/bug create |
+| `zentao project create --name N --product 3[,4] [options]` \| `zentao project get <id>` \| `zentao project list [--page N] [--json]` | projects (product binding mandatory - prevents the server's auto-product path) |
+| `zentao project link-story <id> --stories 36[,41]` \| `zentao project unlink-story <id> --story 36` | project story membership, verified by read-back |
+| `zentao execution create --project N --name T --begin D --end D [--product 3]` | create a sprint under a project (no default sprint/story links via API) |
+| `zentao metric update-dashboard \| update-lib` | recompute dashboard metrics (needs metric privilege; no scheduler on target installs) |
 | `zentao <module> list [--mine \| --product N \| --execution N \| --project N] [--json]` | list objects in a scope (default: my work) |
 | `zentao profile [list \| add \| use \| remove]` | manage/switch connection profiles |
 | `zentao --profile <key\|alias> <command>` | run one command against a specific profile |

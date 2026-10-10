@@ -71,12 +71,32 @@ zentao story create --product 1 --title 'Child story' --parent 14   # child stor
 zentao task create --execution 2 --name 'Rework sessions' --story 14 --assigned-to dev1
 zentao bug create --product 1 --title 'Session dies on refresh' --steps '<p>1. ...</p>'
 
+# Projects and sprints (--product is MANDATORY on project create: without it
+# the server auto-creates a product named after the project)
+zentao project create --name 'Apollo' --product 3 --begin 2026-10-10 --end 2027-01-09
+zentao project list; zentao project get 11
+zentao project link-story 11 --stories 36,41   # warns on skipped stories, verifies by read-back
+zentao story list --project 11                 # read back linked stories
+zentao project unlink-story 11 --story 36
+zentao execution create --project 11 --name 'S1-1010' --begin 2026-10-10 --end 2026-11-01 --product 3
+
+# Related stories (关联需求): field + relation rows are two separate stores;
+# link/unlink maintains BOTH (see Behavior contract)
+zentao story link 36 --with 41,52
+zentao story unlink 36 --with 41
+
 # Status flows
 zentao story activate 14 --comment '<p>starting</p>'
 zentao story close 14 --reason done --comment '<p>shipped</p>'
 zentao story update 14 --status draft    # raw status write: draft|reviewing|active|changing|closed
 zentao task start 5 --consumed 1 --left 4; zentao task finish 5 --consumed 2; zentao task close 5
+zentao task move 5 --execution 13   # repairs server bugs: restores a zeroed story link, warns on stale project
+zentao task delete 5
 zentao bug resolve 12 --resolution fixed --comment '<p>fixed</p>'; zentao bug close 12
+
+# Dashboards read precomputed metrics; without a scheduler they go stale
+zentao metric update-dashboard      # run after bulk story/task changes
+zentao metric update-lib
 
 # List work in a scope (default: my open items)
 zentao bug list                       # my bugs
@@ -125,6 +145,22 @@ feedback, ticket, user, program, doc, file.
 - `story update --status` is a raw status write validated client-side; for
   active/closed prefer `story activate` / `story close`, which record history
   and handle close reason/stage
+- `story link`/`unlink` maintain TWO independent stores: the `linkStories`
+  field (PUT, replace semantics) and `zt_relation` rows (POST linkStory).
+  Using only one of them leaves half the link invisible in the UI - always
+  go through these commands
+- `project link-story` verifies by reading the story list back and exits
+  nonzero when stories are missing: the server answers success even when it
+  silently skips stories in draft/reviewing/closed status, or when the
+  project id was wrong (objectID is not validated server side)
+- `project create` requires `--product`: an empty products[] makes the
+  server create a NEW product named after the project
+- `task move` reads the task back after moving: the server zeroes
+  `task.story` on execution change (restored automatically) and never
+  updates `task.project` (a warning - recreate the task to fix dashboards)
+- `metric update-dashboard` after bulk changes on installs without a
+  scheduler - dashboards otherwise show stale/zero numbers indefinitely;
+  HTTP 403 means the account lacks the metric module privilege
 
 ## Known caveats (server-side)
 

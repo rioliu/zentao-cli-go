@@ -24,10 +24,17 @@ Usage:
   zentao [--profile <key|alias>] story update <id> [options]
   zentao [--profile <key|alias>] story get <id>
   zentao [--profile <key|alias>] story activate|change|close <id> [options]
-  zentao [--profile <key|alias>] task create|update|get|start|finish|close|activate ...
+  zentao [--profile <key|alias>] story link|unlink <id> --with 36[,37]
+  zentao [--profile <key|alias>] task create|update|get|move|delete|start|finish|close|activate ...
   zentao [--profile <key|alias>] bug create|update|get|resolve|confirm|close|activate ...
   zentao [--profile <key|alias>] product list [--page N] [--json]
   zentao [--profile <key|alias>] product get <id>
+  zentao [--profile <key|alias>] project create --name N --product 3[,4] [options]
+  zentao [--profile <key|alias>] project get <id> | project list [--page N] [--json]
+  zentao [--profile <key|alias>] project link-story <id> --stories 36[,41]
+  zentao [--profile <key|alias>] project unlink-story <id> --story 36[,41]
+  zentao [--profile <key|alias>] execution create --project N --name T --begin D --end D [--product 3]
+  zentao [--profile <key|alias>] metric update-dashboard | update-lib
   zentao profile [ ... ]            manage/switch connection profiles
   zentao login [-s URL -u ACCOUNT -p PASS | --password-stdin | --token TOKEN]
                                         authenticate, warm sessions, save profile
@@ -156,6 +163,12 @@ func Execute() int {
 		return runBug(args[1:])
 	case "product":
 		return runProduct(args[1:])
+	case "project":
+		return runProject(args[1:])
+	case "execution":
+		return runExecution(args[1:])
+	case "metric":
+		return runMetric(args[1:])
 	case "profile":
 		return runProfile(args[1:])
 	case "login":

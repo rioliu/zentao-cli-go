@@ -5,14 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
 
 const taskUsage = `Usage:
   zentao task create --execution N --name T [options]
   zentao task update <id> [options]
   zentao task get <id>
+  zentao task move <id> --execution N   move to another execution (repairs server bugs)
+  zentao task delete <id>               delete a task
   zentao task start <id>   [--consumed N] [--left N] [--comment HTML]
   zentao task finish <id>  [--consumed N] [--real-started D] [--finished-date D] [--comment HTML]
   zentao task close <id>   [--comment HTML | --comment-file F]
@@ -56,6 +61,10 @@ func runTask(args []string) int {
 		return runList("task", rest)
 	case "start", "finish", "close", "activate":
 		return taskTransition(action, rest)
+	case "move":
+		return taskMove(rest)
+	case "delete":
+		return taskDelete(rest)
 	case "help", "-h", "--help":
 		fmt.Println(taskUsage)
 		return 0
@@ -249,6 +258,190 @@ func taskTransition(action string, args []string) int {
 		return 1
 	}
 	fmt.Printf("task #%d %sd\n", id, action)
+	return 0
+}
+
+// taskMove moves a task to another execution. Two server bugs are encoded
+// here (both reproduced against a live 22.4 server):
+//
+//  1. moving ZEROES task.story - the read-back below re-PUTs the old value
+//     and verifies the restore;
+//  2. the denormalized task.project is NOT updated by the move (the server
+//     forces project = oldTask->project), while project dashboards group by
+//     task.project - the CLI detects the mismatch and warns; the only clean
+//     fix is recreating the task (create derives project from execution).
+func taskMove(args []string) int {
+	id, ok := parseID(args, "task move")
+	if !ok {
+		return 2
+	}
+	fs := flag.NewFlagSet("task move", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, taskUsage) }
+	execution := fs.Int("execution", 0, "target execution (sprint) ID")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if *execution == 0 {
+		fmt.Fprintln(os.Stderr, "ERROR: task move needs --execution")
+		return 2
+	}
+
+	client, err := newClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	before, err := fetchTaskObject(client, id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	beforeStory := intField(before, "story")
+
+	// Body key is 'execution' on update (create uses 'executionID').
+	// The server validates the target: a bogus id answers
+	// {"status":"fail","message":"Execution does not exist."} with HTTP 200.
+	raw, err := client.API("PUT", fmt.Sprintf("/tasks/%d", id), nil,
+		map[string]any{"execution": *execution})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	if !isSuccess(raw) {
+		fmt.Fprintf(os.Stderr, "ERROR: move failed: %s\n", snippet(string(raw)))
+		return 1
+	}
+
+	after, err := fetchTaskObject(client, id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: move accepted, but read-back failed: %v\n", err)
+		return 1
+	}
+
+	// Workaround 1: the move zeroed the story link - restore it.
+	restored := false
+	if beforeStory != 0 && intField(after, "story") == 0 {
+		raw, err := client.API("PUT", fmt.Sprintf("/tasks/%d", id), nil,
+			map[string]any{"story": beforeStory})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: move zeroed story #%d and the restore failed: %v\n", beforeStory, err)
+			return 1
+		}
+		if !isSuccess(raw) {
+			fmt.Fprintf(os.Stderr, "ERROR: move zeroed story #%d and the restore failed: %s\n", beforeStory, snippet(string(raw)))
+			return 1
+		}
+		check, err := fetchTaskObject(client, id)
+		if err != nil || intField(check, "story") != beforeStory {
+			fmt.Fprintf(os.Stderr, "ERROR: story link #%d not restored (task may now be missing its story)\n", beforeStory)
+			return 1
+		}
+		restored = true
+	}
+
+	// Workaround 2 (detect only): stale task.project after the move.
+	if target := targetProject(client, *execution); target != 0 && intField(after, "project") != target {
+		fmt.Fprintf(os.Stderr, "WARN: task #%d still reports project #%d after the move, target execution belongs to project #%d\n",
+			id, intField(after, "project"), target)
+		fmt.Fprintf(os.Stderr, "WARN: server bug - task.project is not updated on execution change; project dashboards will miscount this task. Recreate the task to fix (create derives project from execution).\n")
+	}
+
+	fmt.Printf("task #%d moved to execution #%d\n", id, *execution)
+	if restored {
+		fmt.Printf("(restored story link #%d - server bug: move zeroes task.story)\n", beforeStory)
+	}
+	return 0
+}
+
+func taskDelete(args []string) int {
+	id, ok := parseID(args, "task delete")
+	if !ok {
+		return 2
+	}
+	client, err := newClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	raw, err := client.API("DELETE", fmt.Sprintf("/tasks/%d", id), nil, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	if !isSuccess(raw) {
+		fmt.Fprintf(os.Stderr, "ERROR: delete failed: %s\n", snippet(string(raw)))
+		return 1
+	}
+	fmt.Printf("task #%d deleted\n", id)
+	return 0
+}
+
+// fetchTaskObject loads one task as a map (used by move's read-backs).
+func fetchTaskObject(client *zclient.Client, id int) (map[string]any, error) {
+	raw, err := client.API("GET", fmt.Sprintf("/tasks/%d", id), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Status  string          `json:"status"`
+		Message json.RawMessage `json:"message"`
+		Task    json.RawMessage `json:"task"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("task #%d: unexpected response: %s", id, snippet(string(raw)))
+	}
+	if len(resp.Task) == 0 || resp.Task[0] == 'n' {
+		msg := strings.TrimSpace(string(resp.Message))
+		if msg == "" || msg == "null" {
+			msg = "not found"
+		}
+		return nil, fmt.Errorf("task #%d: %s", id, strings.Trim(msg, `"`))
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(resp.Task, &obj); err != nil {
+		return nil, fmt.Errorf("task #%d: cannot parse: %w", id, err)
+	}
+	return obj, nil
+}
+
+// intField reads a numeric field that may arrive as JSON number or string.
+func intField(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case string:
+		n, _ := strconv.Atoi(v)
+		return n
+	}
+	return 0
+}
+
+// targetProject resolves the project an execution belongs to. Sprints/
+// stages/kanbans answer on the execution route; a plain project id answers
+// there with an empty object but resolves via the project route (one table,
+// two serializers). Returns 0 when neither resolves - checks are skipped.
+func targetProject(client *zclient.Client, executionID int) int {
+	if raw, err := client.API("GET", fmt.Sprintf("/executions/%d", executionID), nil, nil); err == nil {
+		var wrapped struct {
+			Execution *struct {
+				ID      int `json:"id"`
+				Project int `json:"project"`
+			} `json:"execution"`
+		}
+		if json.Unmarshal(raw, &wrapped) == nil && wrapped.Execution != nil && wrapped.Execution.ID == executionID {
+			return wrapped.Execution.Project
+		}
+	}
+	if raw, err := client.API("GET", fmt.Sprintf("/projects/%d", executionID), nil, nil); err == nil {
+		var wrapped struct {
+			Project *struct {
+				ID int `json:"id"`
+			} `json:"project"`
+		}
+		if json.Unmarshal(raw, &wrapped) == nil && wrapped.Project != nil && wrapped.Project.ID == executionID {
+			return executionID
+		}
+	}
 	return 0
 }
 
