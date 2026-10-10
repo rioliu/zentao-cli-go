@@ -85,15 +85,10 @@ func productList(args []string) int {
 	}
 	fmt.Print(out)
 
-	var pager struct {
-		RecTotal   int `json:"recTotal"`
-		RecPerPage int `json:"recPerPage"`
-		PageID     int `json:"pageID"`
-	}
-	_ = json.Unmarshal(raw, &pager)
-	if pager.RecPerPage > 0 && pager.PageID*pager.RecPerPage < pager.RecTotal {
+	pageID, recPerPage, recTotal := pagerState(raw)
+	if recPerPage > 0 && pageID*recPerPage < recTotal {
 		fmt.Fprintf(os.Stderr, "page %d (%d products total) - use --page N\n",
-			pager.PageID, pager.RecTotal)
+			pageID, recTotal)
 	}
 	if len(out) == 0 {
 		fmt.Fprintln(os.Stderr, "no products found")

@@ -159,3 +159,22 @@ func runList(module string, args []string) int {
 	}
 	return 0
 }
+
+// pagerState extracts pagination from a list response. The pager lives in a
+// NESTED object ({"pager":{"recTotal":...,"recPerPage":...,"pageID":...}}):
+// unmarshalling those fields at the TOP level silently yields zeros - that
+// bug kept the product list's "use --page N" hint dead until it was noticed
+// while adding project list. Returns zeros when the pager is absent.
+func pagerState(raw []byte) (pageID, recPerPage, recTotal int) {
+	var wrapped struct {
+		Pager struct {
+			RecTotal   int `json:"recTotal"`
+			RecPerPage int `json:"recPerPage"`
+			PageID     int `json:"pageID"`
+		} `json:"pager"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return 0, 0, 0
+	}
+	return wrapped.Pager.PageID, wrapped.Pager.RecPerPage, wrapped.Pager.RecTotal
+}
