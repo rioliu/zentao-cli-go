@@ -94,3 +94,123 @@ rules:
       (REST Token is rejected) and a matching Referer header or POST bodies
       are silently dropped (framework/base/router.class.php).
     client_rule: implement comment add/list via the classic routes (internal/zclient).
+
+  # --- captured from the AI审读 project setup session (2026-10-10), each
+  # rule verified against a live 22.4 server and pinned by a test in
+  # contract/gaps_test.go ---
+
+  - id: required-params-read-query-only
+    applies: "write actions with required parameters (POST /executions/linkStory, GET /executions/{id}/unlinkStory, ...)"
+    verified: "22.4"
+    server_behavior: >-
+      required-parameter validation reads the QUERY STRING only: a JSON body
+      does not satisfy it, and neither does the path {id} for several
+      methods.
+    client_rule: send required parameters in the query string, never only in the body or path.
+
+  - id: linkstory-objectid-not-validated
+    applies: "POST /executions/linkStory (project/sprint story membership)"
+    verified: "22.4"
+    server_behavior: >-
+      checkAccess validates params named {module}ID by direct table lookup;
+      objectID is NOT validated. The path form POST /executions/{id}/linkStory
+      is a silent no-op (answers success with load:...executionID=0 - the path
+      id never reaches the method); ?objectID={id} in the query works.
+    client_rule: >-
+      call POST /executions/linkStory?objectID={id}; verify the link by
+      reading GET /projects/{id}/stories back - success alone means nothing.
+
+  - id: execution-project-single-table
+    applies: "GET /executions/{id}, GET /projects/{id}"
+    verified: "22.4"
+    server_behavior: >-
+      TABLE_EXECUTION === TABLE_PROJECT (zt_project holds programs, projects
+      and sprints, discriminated by type), but the two REST serializers do
+      not cover each other's types symmetrically: GET /executions/{projectID}
+      answers an empty execution object, GET /projects/{sprintID} resolves to
+      the PARENT project, GET of a missing id answers status=fail with HTTP
+      200 ("Execution/Project does not exist.").
+    client_rule: >-
+      resolve an execution's owning project via GET /executions/{id} and fall
+      back to GET /projects/{id}; never trust a project lookup by id without
+      checking the returned id matches the requested one; treat status=fail
+      bodies (HTTP 200) as errors.
+
+  - id: scoped-routes-for-object-lists
+    applies: "GET /projects/{id}/stories vs bare/other-scoped story lists"
+    verified: "22.4"
+    server_behavior: >-
+      bare /projectstories/... routes 302-redirect to the web login; the
+      execution-scoped route /executions/{id}/stories returns an EMPTY list
+      for project-type ids. GET /projects/{id}/stories works for projects
+      (productID query optional).
+    client_rule: read project story membership only via /projects/{id}/stories.
+
+  - id: linkstory-status-filter
+    applies: "POST /executions/linkStory (project/sprint link)"
+    verified: "22.4"
+    server_behavior: >-
+      stories in draft/reviewing/closed status are silently skipped
+      (execution model linkStory: $notAllowedStatus) while the call still
+      answers success. The story-level POST /stories/{id}/linkStory does NOT
+      filter by status (verified: relation rows created for reviewing
+      stories).
+    client_rule: >-
+      after linking to a project, read the story list back and report the
+      missing ids with their status; never trust the success response.
+
+  - id: story-link-two-mechanisms
+    applies: "story related-links (关联需求)"
+    verified: "22.4"
+    server_behavior: >-
+      a story link lives in two independent places: the linkStories FIELD
+      (PUT /stories/{id}, REPLACE semantics, reverse side synced
+      automatically, but the view tab ignores it) and zt_relation rows
+      (POST /stories/{id}/linkStory {stories:[...]}, idempotent - a repeat
+      answers HTTP 200 with an EMPTY body and creates no duplicate rows,
+      but leaves the field empty). Unlink: PUT the remaining list for the field, then
+      POST .../linkStory?type=remove&linkedStoryID={id} (query params, empty
+      body) for the relation rows. The server does not validate story ids in
+      the field.
+    client_rule: >-
+      link = union(current field, new ids) + relation post; unlink = field
+      difference + one remove per target; validate target ids client side.
+
+  - id: write-response-shapes-inconsistent
+    applies: "all write actions"
+    verified: "22.4"
+    server_behavior: >-
+      write responses mix shapes: {"status":"success","data":...}
+      (REST-style), {"status":"success","message":"保存成功","load":...}
+      (classic-route style), a bare `success` body (metrics recompute), and
+      failures arriving as {"status":"fail",...} WITH HTTP 200.
+    client_rule: accept any body containing "success" as success, treat status=fail bodies as errors, never rely on one fixed schema.
+
+  - id: task-move-corrupts-fields
+    applies: "PUT /tasks/{id} with execution change"
+    verified: "22.4"
+    server_behavior: >-
+      two verified bugs: (1) moving a task ZEROES task.story (the model
+      forces other fields from the old task but not the child story link in
+      some paths); (2) the denormalized task.project is NOT updated
+      ($task->project = $oldTask->project), while project dashboards group
+      by t1.project - counts drift until the task is recreated.
+    client_rule: >-
+      after an execution change, read the task back: restore story if it
+      became 0 (PUT {story: <old>}) and verify the restore; compare
+      task.project against the target execution's project and warn on
+      mismatch (fix = recreate the task).
+
+  - id: metric-recompute-endpoints-undeclared
+    applies: "POST /metrics/updateDashboardMetricLib, POST /metrics/updateMetricLib"
+    verified: "22.4"
+    server_behavior: >-
+      absent from the upstream spec but present on the server: dashboard
+      endpoint echoes a bare `success` body; update-lib may echo PHP error
+      dumps (opensource 22.4 references biz/ipd tables) ending with
+      `success`; both return HTTP 403 "Not allowed" without the metric
+      module privilege. Needed whenever bulk data changes on installs
+      without a scheduler (cronSystemCall=false, no OS cron).
+    client_rule: >-
+      POST with no body; success = body contains "success"; surface Error/<pre
+      content as a warning; map 403 to a clear 'metric privilege' message.

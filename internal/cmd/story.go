@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
 
 const storyUsage = `Usage:
@@ -17,6 +20,8 @@ const storyUsage = `Usage:
   zentao story activate <id> [--comment HTML | --comment-file F]
   zentao story change <id>  [--comment HTML | --comment-file F]
   zentao story close <id> --reason R [--comment HTML | --comment-file F]
+  zentao story link <id> --with 36[,37]      link related stories
+  zentao story unlink <id> --with 36[,37]    remove related stories
 
 Create/update options:
   --title T              story title (required for create)
@@ -59,6 +64,8 @@ func runStory(args []string) int {
 		return runList("story", rest)
 	case "activate", "change", "close":
 		return storyTransition(action, rest)
+	case "link", "unlink":
+		return storyLink(action, rest)
 	case "help", "-h", "--help":
 		fmt.Println(storyUsage)
 		return 0
@@ -321,6 +328,263 @@ func storyTransition(action string, args []string) int {
 	}
 	fmt.Printf("story #%d %sd\n", id, action)
 	return 0
+}
+
+// storyLink implements 'story link' / 'story unlink'. A story link lives in
+// TWO independent places on the server and both must be maintained
+// (verified live against 22.4):
+//
+//	(a) the linkStories field - what the edit form and API readers see.
+//	    PUT /stories/{id} REPLACES the full list; the server syncs the
+//	    reverse side (the other story's field) automatically, but the field
+//	    alone leaves the 关联需求 view tab empty.
+//	(b) zt_relation rows - POST /stories/{id}/linkStory {"stories": [...]}
+//	    (idempotent) - what the 关联需求 view tab renders; relation rows
+//	    alone leave the linkStories field empty.
+//
+// So link does a+b with the field as a union (a blind PUT would drop
+// existing links - replace semantics). Unlink mirrors it: PUT the remaining
+// list, then one type=remove call per target (deletes both relation rows).
+func storyLink(action string, args []string) int {
+	id, ok := parseID(args, "story "+action)
+	if !ok {
+		return 2
+	}
+	fs := flag.NewFlagSet("story "+action, flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, storyUsage) }
+	with := fs.String("with", "", "comma separated story IDs to link/unlink")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	targets, err := parseIDList(*with)
+	if err != nil || len(targets) == 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: story %s needs --with <id>[,<id>...]\n", action)
+		return 2
+	}
+	for _, t := range targets {
+		if t == id {
+			fmt.Fprintf(os.Stderr, "ERROR: a story cannot link to itself (#%d)\n", id)
+			return 2
+		}
+	}
+
+	client, err := newClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	src, err := fetchStoryObject(client, id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	current := storyLinks(src["linkStories"])
+
+	switch action {
+	case "link":
+		// The server never validates story ids here: a bogus id would be
+		// written into the field silently, so check every target first.
+		for _, t := range targets {
+			if _, err := fetchStoryObject(client, t); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: target story #%d: %v\n", t, err)
+				return 1
+			}
+		}
+		var added, already []int
+		for _, t := range targets {
+			if slices.Contains(current, t) {
+				already = append(already, t)
+			} else {
+				added = append(added, t)
+			}
+		}
+		if len(added) > 0 {
+			// Replace semantics: PUT the union, never just the new ids.
+			merged := unionIDs(current, targets)
+			body := map[string]any{"linkStories": intStrings(merged)}
+			raw, err := client.API("PUT", fmt.Sprintf("/stories/%d", id), nil, body)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				return 1
+			}
+			if !isSuccess(raw) {
+				fmt.Fprintf(os.Stderr, "ERROR: linkStories update failed: %s\n", snippet(string(raw)))
+				return 1
+			}
+		}
+		// Always post the relation rows: a link may exist in the field only
+		// (a-only session), and repeated posts are idempotent server side.
+		raw, err := client.API("POST", fmt.Sprintf("/stories/%d/linkStory", id), nil,
+			map[string]any{"stories": intStrings(targets)})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			return 1
+		}
+		if !isSuccess(raw) {
+			fmt.Fprintf(os.Stderr, "ERROR: link failed: %s\n", snippet(string(raw)))
+			return 1
+		}
+		fmt.Printf("story #%d linked to %s\n", id, joinIDs(targets))
+		if len(already) > 0 {
+			fmt.Printf("(already in linkStories: %s)\n", joinIDs(already))
+		}
+		return 0
+
+	default: // unlink
+		remaining := diffIDs(current, targets)
+		if len(remaining) != len(dedupeIDs(current)) {
+			// Field replace: PUT what stays; the server syncs removals to the
+			// reverse side too (verified: [] clears both stories).
+			body := map[string]any{"linkStories": intStrings(remaining)}
+			raw, err := client.API("PUT", fmt.Sprintf("/stories/%d", id), nil, body)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				return 1
+			}
+			if !isSuccess(raw) {
+				fmt.Fprintf(os.Stderr, "ERROR: linkStories update failed: %s\n", snippet(string(raw)))
+				return 1
+			}
+		}
+		// Relation rows may exist even when the field is empty (b-only
+		// state), so always run the remove - it is a harmless no-op.
+		// Quirk: remove travels as QUERY params (type=remove is checked
+		// before the POST body in the controller); the body must be empty.
+		for _, t := range targets {
+			query := url.Values{"type": {"remove"}, "linkedStoryID": {strconv.Itoa(t)}}
+			raw, err := client.API("POST", fmt.Sprintf("/stories/%d/linkStory", id), query, nil)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: unlink #%d: %v\n", t, err)
+				return 1
+			}
+			if !isSuccess(raw) {
+				fmt.Fprintf(os.Stderr, "ERROR: unlink #%d failed: %s\n", t, snippet(string(raw)))
+				return 1
+			}
+		}
+		fmt.Printf("story #%d unlinked from %s\n", id, joinIDs(targets))
+		return 0
+	}
+}
+
+// fetchStoryObject loads one story as a map. A missing or deleted story is
+// an error - the server answers {"status":"fail","message":"Story does
+// not exist."} with HTTP 200, so the response body must be checked.
+func fetchStoryObject(client *zclient.Client, id int) (map[string]any, error) {
+	raw, err := client.API("GET", fmt.Sprintf("/stories/%d", id), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Status  string          `json:"status"`
+		Message json.RawMessage `json:"message"`
+		Story   json.RawMessage `json:"story"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("story #%d: unexpected response: %s", id, snippet(string(raw)))
+	}
+	if len(resp.Story) == 0 || resp.Story[0] == 'n' {
+		msg := strings.TrimSpace(string(resp.Message))
+		if msg == "" || msg == "null" {
+			msg = "not found"
+		}
+		return nil, fmt.Errorf("story #%d: %s", id, strings.Trim(msg, `"`))
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(resp.Story, &obj); err != nil {
+		return nil, fmt.Errorf("story #%d: cannot parse: %w", id, err)
+	}
+	return obj, nil
+}
+
+// storyLinks parses the linkStories field. The server returns a comma
+// joined STRING ("341,343"); tolerate a JSON array too.
+func storyLinks(v any) []int {
+	var out []int
+	switch t := v.(type) {
+	case string:
+		for _, part := range strings.Split(t, ",") {
+			if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && n > 0 {
+				out = append(out, n)
+			}
+		}
+	case []any:
+		for _, e := range t {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(e))); err == nil && n > 0 {
+				out = append(out, n)
+			}
+		}
+	}
+	out = dedupeIDs(out)
+	if len(out) == 0 {
+		return nil // an empty field means "no links", not an empty slice
+	}
+	return out
+}
+
+func dedupeIDs(ids []int) []int {
+	seen := map[int]bool{}
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// unionIDs returns a deduped union of a and b, keeping a's order first.
+func unionIDs(a, b []int) []int { return dedupeIDs(append(append([]int{}, a...), b...)) }
+
+// diffIDs returns a (deduped) minus every id in minus.
+func diffIDs(a, minus []int) []int {
+	out := make([]int, 0, len(a))
+	for _, id := range dedupeIDs(a) {
+		if !slices.Contains(minus, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// intStrings renders ids as strings (the linkStories field stores strings).
+func intStrings(ids []int) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.Itoa(id)
+	}
+	return out
+}
+
+// joinIDs formats ids for human output: #36, #37.
+func joinIDs(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = "#" + strconv.Itoa(id)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseIDList parses a comma separated list of positive ids ("36,37").
+// Empty input is an error - callers want a non-empty list or a complaint.
+func parseIDList(s string) ([]int, error) {
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("ids must be positive numbers, got %q", part)
+		}
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no ids given")
+	}
+	return out, nil
 }
 
 // parseID extracts the <id> argument for a command.
