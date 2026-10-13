@@ -214,3 +214,19 @@ rules:
     client_rule: >-
       POST with no body; success = body contains "success"; surface Error/<pre
       content as a warning; map 403 to a clear 'metric privilege' message.
+
+  - id: task-subtask-parent-undeclared
+    applies: "POST /tasks, PUT /tasks/{taskID} (subtasks)"
+    verified: "22.4"
+    spec_claim: "task create/edit bodies have no parent field; only stories declare parent"
+    server_behavior: >-
+      the task create/edit FORM config (module/task/config/form.php) includes
+      parent, so both POST /tasks and PUT /tasks/{taskID} accept it and
+      persist the hierarchy: the child's parent is stored and the parent's
+      isParent flag flips to 1; PUT reparents and repairs BOTH old and new
+      parents' isParent flags. The UI's "Add Subtasks" button posts to the
+      same path (m=task&f=batchCreate with a parent task id).
+    client_rule: >-
+      send parent in the create/update body when --parent is passed; omit the
+      field otherwise (absent = root task, explicit 0 = reparent-to-root).
+      Pinned by TestTaskSubtask_ParentPersisted and TestE2E_TaskCreateSubtask.

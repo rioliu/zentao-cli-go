@@ -126,6 +126,9 @@ zentao story create --product 1 --title 'Fix login timeout details' \
 zentao task create --execution 2 --name 'Rework session handling' \
   --story 14 --assigned-to dev1 --estimate 8
 
+# Subtask: --parent attaches a task under a parent task
+zentao task create --execution 2 --name 'Write session tests' --parent 55
+
 # Bug: what testing found
 zentao bug create --product 1 --title 'Session dies on page refresh' \
   --severity 3 --type codeerror --steps '<p>1. login 2. refresh 3. logged out</p>'
