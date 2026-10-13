@@ -329,6 +329,63 @@ func TestE2E_StoryCreateChild(t *testing.T) {
 	}
 }
 
+// TestE2E_TaskCreateSubtask pins the --parent flag end to end for tasks:
+// the binary creates a subtask under a provisioned parent task, and the
+// server must persist the link (read back through the REST fixture client).
+func TestE2E_TaskCreateSubtask(t *testing.T) {
+	env := testEnv(t)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	c := fixtureClient(t)
+	execID := provisionExecution(t, env)
+
+	// Parent task provisioned through the fixture client.
+	raw, err := c.API("POST", "/tasks", nil, map[string]any{
+		"name": "e2e-sub-parent-" + suffix, "executionID": execID, "assignedTo": c.Account,
+	})
+	if err != nil {
+		t.Fatalf("fixture parent task: %v (%s)", err, raw)
+	}
+	var created struct{ ID int `json:"id"` }
+	if err := json.Unmarshal(raw, &created); err != nil || created.ID == 0 {
+		t.Fatalf("fixture parent response has no id: %s", raw)
+	}
+	parentID := created.ID
+
+	// Create the subtask through the CLI binary - this is the surface under test.
+	code, out, errOut := run(t, env, "",
+		"task", "create", "--execution", fmt.Sprint(execID),
+		"--name", "e2e-sub-child-"+suffix, "--parent", fmt.Sprint(parentID),
+		"--assigned-to", c.Account)
+	if code != 0 {
+		t.Fatalf("task create --parent: code=%d out=%q err=%q", code, out, errOut)
+	}
+	var sub struct{ ID int `json:"id"` }
+	if _, err := fmt.Sscanf(out, "task #%d created", &sub.ID); err != nil || sub.ID == 0 {
+		t.Fatalf("cannot parse created id from %q", out)
+	}
+
+	// Server-side truth: the link persisted, the parent is a parent now.
+	raw, err = c.API("GET", fmt.Sprintf("/tasks/%d", sub.ID), nil, nil)
+	if err != nil {
+		t.Fatalf("read subtask: %v (%s)", err, raw)
+	}
+	var wrapped struct {
+		Task map[string]any `json:"task"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Task == nil {
+		t.Fatalf("read subtask: bad response %s", raw)
+	}
+	if intOf(wrapped.Task["parent"]) != parentID {
+		t.Errorf("subtask parent = %v, want %d", wrapped.Task["parent"], parentID)
+	}
+
+	// Teardown: parent delete cascades to the child.
+	if _, err := c.API("DELETE", fmt.Sprintf("/tasks/%d", parentID), nil, nil); err != nil {
+		t.Errorf("delete parent %d: %v", parentID, err)
+	}
+}
+
 // existingStoryID provisions a story fixture (via the REST client) and
 // returns its id. All assertions in this ring go through the CLI binary.
 func existingStoryID(t *testing.T, env []string) int {

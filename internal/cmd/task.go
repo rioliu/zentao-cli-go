@@ -28,6 +28,7 @@ Create/update options:
   --name T               task name (required for create)
   --desc HTML            description (--desc-file F, '-' = stdin)
   --story N              linked story ID
+  --parent N             parent task ID (create a subtask / reparent)
   --assigned-to NAME     assignee
   --pri N                priority (1-4)
   --estimate N           estimate in hours
@@ -451,6 +452,7 @@ type taskFields struct {
 	desc       *string
 	descFile   *string
 	story      *int
+	parent     *int
 	assignedTo *string
 	pri        *int
 	estimate   *float64
@@ -465,6 +467,7 @@ func registerTaskFields(fs *flag.FlagSet) *taskFields {
 		desc:       fs.String("desc", "", "description (HTML)"),
 		descFile:   fs.String("desc-file", "", "read description from file ('-' = stdin)"),
 		story:      fs.Int("story", 0, "linked story ID"),
+		parent:     fs.Int("parent", 0, "parent task ID (subtask)"),
 		assignedTo: fs.String("assigned-to", "", "assignee"),
 		pri:        fs.Int("pri", 0, "priority 1-4"),
 		estimate:   fs.Float64("estimate", 0, "estimate in hours"),
@@ -490,6 +493,11 @@ func (f *taskFields) build() (map[string]any, error) {
 	}
 	if *f.story != 0 {
 		body["story"] = *f.story
+	}
+	// Omitted when not passed: an absent parent means root task, an explicit
+	// 0 would be an unintended reparent-to-root on update (same as stories).
+	if *f.parent != 0 {
+		body["parent"] = *f.parent
 	}
 	if *f.assignedTo != "" {
 		body["assignedTo"] = *f.assignedTo

@@ -366,6 +366,91 @@ func TestStoryChild_ParentPersisted(t *testing.T) {
 	}
 }
 
+// TestTaskSubtask_ParentPersisted pins the parent/child task hierarchy:
+// POST /tasks accepts an UNDECLARED "parent" field and the server persists
+// it, flipping the parent's isParent flag (the upstream spec's create body
+// has no parent - specs/overrides.yaml: task-subtask-parent-undeclared).
+// This is what `zentao task create --parent N` relies on. PUT reparents and
+// repairs both parents' isParent flags.
+func TestTaskSubtask_ParentPersisted(t *testing.T) {
+	c := newClient(t)
+	productID := ensureProduct(t, c)
+	execID := ensureExecution(t, c, productID)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+
+	readTask := func(id int) map[string]any {
+		t.Helper()
+		raw, err := c.API("GET", fmt.Sprintf("/tasks/%d", id), nil, nil)
+		if err != nil {
+			t.Fatalf("get task %d: %v (%s)", id, err, raw)
+		}
+		var wrapped struct {
+			Task map[string]any `json:"task"`
+		}
+		if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Task == nil {
+			t.Fatalf("get task %d: no task in response: %s", id, raw)
+		}
+		return wrapped.Task
+	}
+	createTask := func(name string) int {
+		t.Helper()
+		raw, err := postJSON(t, c, "/tasks", nil, map[string]any{
+			"name": name, "executionID": execID, "assignedTo": c.Account,
+		})
+		if err != nil {
+			t.Fatalf("create task %q: %v (%s)", name, err, raw)
+		}
+		id, ok := createdIDOf(raw)
+		if !ok {
+			t.Fatalf("task create %q has no id: %s", name, raw)
+		}
+		return id
+	}
+
+	parentID := createTask("sub-parent-" + suffix)
+
+	// Child on create: parent rides the body.
+	raw, err := postJSON(t, c, "/tasks", nil, map[string]any{
+		"name": "sub-child-" + suffix, "executionID": execID,
+		"assignedTo": c.Account, "parent": parentID,
+	})
+	if err != nil {
+		t.Fatalf("create child: %v (%s)", err, raw)
+	}
+	childID, ok := createdIDOf(raw)
+	if !ok {
+		t.Fatalf("child create response has no id: %s", raw)
+	}
+	t.Cleanup(func() {
+		for _, id := range []int{childID, parentID} {
+			_, _ = c.API("DELETE", fmt.Sprintf("/tasks/%d", id), nil, nil)
+		}
+	})
+
+	if got := intOf(readTask(childID)["parent"]); got != parentID {
+		t.Errorf("child parent = %d, want %d (server dropped the undeclared parent field)", got, parentID)
+	}
+	if got := intOf(readTask(parentID)["isParent"]); got != 1 {
+		t.Errorf("parent isParent = %d, want 1 after child attached", got)
+	}
+
+	// Reparent on update: PUT also accepts parent and repairs both flags.
+	otherID := createTask("sub-parent2-" + suffix)
+	t.Cleanup(func() { _, _ = c.API("DELETE", fmt.Sprintf("/tasks/%d", otherID), nil, nil) })
+	if _, err := c.API("PUT", fmt.Sprintf("/tasks/%d", childID), nil, map[string]any{"parent": otherID}); err != nil {
+		t.Fatalf("reparent: %v", err)
+	}
+	if got := intOf(readTask(childID)["parent"]); got != otherID {
+		t.Errorf("child parent after PUT = %d, want %d", got, otherID)
+	}
+	if got := intOf(readTask(parentID)["isParent"]); got != 0 {
+		t.Errorf("old parent isParent = %d after reparent, want 0 (flag not repaired)", got)
+	}
+	if got := intOf(readTask(otherID)["isParent"]); got != 1 {
+		t.Errorf("new parent isParent = %d after reparent, want 1", got)
+	}
+}
+
 // ensureExecution creates the project+execution chain tasks live under
 // (unique names per run, like the other fixtures).
 func ensureExecution(t *testing.T, c *zclient.Client, productID int) int {
