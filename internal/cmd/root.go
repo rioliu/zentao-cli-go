@@ -101,11 +101,12 @@ func resolveCredentials() (server, account, password, token string, err error) {
 		if err != nil {
 			return "", "", "", "", err
 		}
+		server = endpointFor(p)
 		pw := p.Password
 		if env := os.Getenv("ZENTAO_PASSWORD"); env != "" {
 			pw = env
 		}
-		return p.Server, p.Account, pw, token, nil
+		return server, p.Account, pw, token, nil
 	}
 
 	if server, account = os.Getenv("ZENTAO_URL"), os.Getenv("ZENTAO_ACCOUNT"); server != "" && account != "" {
@@ -115,14 +116,28 @@ func resolveCredentials() (server, account, password, token string, err error) {
 	if path := profile.DefaultPath(); path != "" {
 		s := profile.Load(path)
 		if p, ok := s.Active(); ok {
+			server = endpointFor(p)
 			pw := p.Password
 			if env := os.Getenv("ZENTAO_PASSWORD"); env != "" {
 				pw = env
 			}
-			return p.Server, p.Account, pw, token, nil
+			return server, p.Account, pw, token, nil
 		}
 	}
 	return "", "", "", token, nil
+}
+
+// endpointFor applies profile endpoint failover: a profile may declare
+// alternates (other addresses of the same instance, e.g. public vs. office
+// LAN) and the first reachable one is used. The substitution is announced on
+// stderr so scripts piping stdout stay clean; the profile file is never
+// rewritten. Explicit ZENTAO_URL targets bypass this by never being profiles.
+func endpointFor(p profile.Profile) string {
+	server, switched := profile.SelectEndpoint(p, profile.ProbeTimeout())
+	if switched {
+		fmt.Fprintf(os.Stderr, "zentao: %s unreachable, using %s (profile %s)\n", p.Server, server, p.Key())
+	}
+	return server
 }
 
 // extractProfileFlag pulls the global --profile <ref> / --profile=<ref> out

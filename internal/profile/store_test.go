@@ -114,3 +114,28 @@ func TestDefaultPath(t *testing.T) {
 		t.Errorf("default path = %q, want /xdg/zentao-cli-go/profiles.json", p)
 	}
 }
+
+func TestStore_AddPreservesSavedPasswordOnReadd(t *testing.T) {
+	// Re-adding the same account@server (e.g. to attach alternates) must not
+	// silently drop the saved password.
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	s := Load(path)
+	if _, err := s.Add(Profile{Server: "http://zt.example/zentao", Account: "u", Password: "savedpw"}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := Load(path)
+	if _, err := s2.Add(Profile{
+		Server:     "http://zt.example/zentao",
+		Account:    "u",
+		Alternates: []string{"http://public.example/zentao"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := Load(path).Active()
+	if !ok || p.Password != "savedpw" {
+		t.Errorf("saved password lost on re-add: %+v", p)
+	}
+	if len(p.Alternates) != 1 {
+		t.Errorf("alternates not applied: %+v", p)
+	}
+}

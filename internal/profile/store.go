@@ -12,6 +12,8 @@ package profile
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,16 +24,112 @@ import (
 )
 
 // Profile is one saved connection target.
+//
+// Alternates declares other addresses of the SAME instance for networks where
+// the primary Server is unreachable (office LAN vs. home/VPN), mirroring the
+// ssh-config pattern of a primary Host with a Match-probed fallback: e.g.
+// Server=http://192.168.25.243/zentao with Alternates=[http://60.247.9.68:12308/zentao].
+// They carry the same account and credentials as the primary.
 type Profile struct {
-	Alias    string `json:"alias,omitempty"`
-	Server   string `json:"server"`
-	Account  string `json:"account"`
-	Password string `json:"password,omitempty"` // opt-in only, 0600 file
-	LastUsed string `json:"lastUsedTime,omitempty"`
+	Alias      string   `json:"alias,omitempty"`
+	Server     string   `json:"server"`
+	Account    string   `json:"account"`
+	Password   string   `json:"password,omitempty"` // opt-in only, 0600 file
+	Alternates []string `json:"alternates,omitempty"`
+	LastUsed   string   `json:"lastUsedTime,omitempty"`
 }
 
 // Key is the canonical profile key: account@server (official CLI format).
 func (p Profile) Key() string { return p.Account + "@" + strings.TrimRight(p.Server, "/") }
+
+// normalizeAlternates trims, drops empties and duplicates, and removes the
+// primary server itself from the list (an endpoint is not its own fallback).
+func normalizeAlternates(primary string, alts []string) []string {
+	if len(alts) == 0 {
+		return nil
+	}
+	primary = strings.TrimRight(primary, "/")
+	seen := map[string]bool{primary: true}
+	out := make([]string, 0, len(alts))
+	for _, a := range alts {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if seen[strings.TrimRight(a, "/")] {
+			continue
+		}
+		seen[strings.TrimRight(a, "/")] = true
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// SelectEndpoint returns the server to actually talk to for this profile.
+//
+// With no alternates it returns Server unchanged (no probing, no overhead -
+// behavior identical to a build without failover). Otherwise Server is
+// TCP-probed first and each alternate in declared order; the first reachable
+// address wins. When nothing answers, the primary Server is returned so the
+// eventual connection error names the endpoint the user configured.
+//
+// A "switched=true" result means the caller should announce the substitution
+// (stderr note) - the profile itself is never rewritten.
+func SelectEndpoint(p Profile, probeTimeout time.Duration) (server string, switched bool) {
+	if len(p.Alternates) == 0 {
+		return p.Server, false
+	}
+	if probeTCP(p.Server, probeTimeout) {
+		return p.Server, false
+	}
+	for _, alt := range p.Alternates {
+		if alt == "" || alt == p.Server {
+			continue
+		}
+		if probeTCP(alt, probeTimeout) {
+			return alt, true
+		}
+	}
+	return p.Server, false
+}
+
+// probeTCP reports whether a TCP connection to server's host:port succeeds
+// within timeout. URL parsing falls back to treating the input as a bare
+// host:port; any unparseable address counts as unreachable.
+func probeTCP(server string, timeout time.Duration) bool {
+	target := server
+	if u, err := url.Parse(server); err == nil && u.Host != "" {
+		target = u.Host
+		if u.Port() == "" {
+			switch u.Scheme {
+			case "https":
+				target = net.JoinHostPort(u.Hostname(), "443")
+			default:
+				target = net.JoinHostPort(u.Hostname(), "80")
+			}
+		}
+	}
+	conn, err := net.DialTimeout("tcp", target, timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// ProbeTimeout bounds each endpoint probe. The env override exists for
+// slow VPN setups; default matches the ssh-config precedent (nc -G 2).
+func ProbeTimeout() time.Duration {
+	if v := os.Getenv("ZENTAO_PROBE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 2 * time.Second
+}
 
 // Store is the on-disk profile file.
 type Store struct {
@@ -103,6 +201,17 @@ func (s *Store) Add(p Profile) (string, error) {
 			return "", fmt.Errorf("alias %q already used by profile %s", p.Alias, k)
 		}
 	}
+	// Re-adding the same account@server (e.g. to attach alternates) must not
+	// silently drop a password that was saved earlier. An explicitly passed
+	// password always wins; an empty one keeps the stored value.
+	if p.Password == "" {
+		if existing, ok := s.Profiles[key]; ok {
+			p.Password = existing.Password
+		}
+	}
+	// Drop empty and duplicate alternates; never allow the primary to be
+	// listed as its own fallback.
+	p.Alternates = normalizeAlternates(p.Server, p.Alternates)
 	p.LastUsed = time.Now().UTC().Format(time.RFC3339)
 	s.Profiles[key] = p
 	s.Current = key

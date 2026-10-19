@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,4 +153,72 @@ func TestMain(m *testing.M) {
 	// Keep unit tests away from the developer's real profile/session files.
 	os.Setenv("ZENTAO_NO_CACHE", "1")
 	os.Exit(m.Run())
+}
+
+// reachableURL returns a URL with a live TCP listener behind it.
+func reachableURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	return "http://" + l.Addr().String()
+}
+
+// unreachableURL returns a URL whose TCP port is guaranteed closed.
+func unreachableURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return "http://" + addr
+}
+
+func TestResolveCredentials_ProfileEndpointFailover(t *testing.T) {
+	// A profile's declared alternate endpoints (same instance, other
+	// network) are probed when the primary is down; the reachable one wins.
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	s := profile.Load(path)
+	primary := unreachableURL(t)
+	if _, err := s.Add(profile.Profile{
+		Server:     primary,
+		Account:    "rioliu",
+		Alias:      "zt",
+		Alternates: []string{reachableURL(t)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZENTAO_PROFILES", path)
+	t.Setenv("ZENTAO_PROBE_TIMEOUT", "300ms")
+	reset(t)
+
+	// Current profile path: failover applies.
+	server, account, _, _, err := resolveCredentials()
+	if err != nil || account != "rioliu" {
+		t.Fatalf("current profile: %v account=%q", err, account)
+	}
+	if server == primary {
+		t.Fatalf("expected failover to the alternate endpoint, still on primary %q", server)
+	}
+
+	// Explicit --profile path: same failover (the profile names the
+	// instance; its alternates are just other ways to reach it).
+	flagProfileRef = "zt"
+	server2, _, _, _, err := resolveCredentials()
+	if err != nil || server2 != server {
+		t.Errorf("flag profile failover: %v got %q want %q", err, server2, server)
+	}
+
+	// Explicit ZENTAO_URL env is a direct target, NOT a profile: no probing.
+	flagProfileRef = ""
+	t.Setenv("ZENTAO_URL", unreachableURL(t))
+	t.Setenv("ZENTAO_ACCOUNT", "ci")
+	server3, _, _, _, err := resolveCredentials()
+	if err != nil || server3 == server {
+		t.Errorf("env target must not failover: %v got %q", err, server3)
+	}
 }

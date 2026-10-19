@@ -118,8 +118,16 @@ zentao comment list story 14
 # Profiles (multiple Zentao instances)
 zentao profile                       # list, current marked with *
 zentao profile add --server URL --account NAME --as alias --save-password
+zentao profile add --server URL --account A --alternate URL   # same instance,
+                                   # other network (office LAN vs. public);
+                                   # probe-failover picks the reachable one
 zentao profile <alias>               # switch
 zentao --profile <alias> comment list story 14   # one-off target
+
+Endpoint failover: when a profile's --server does not answer a TCP probe,
+the first reachable --alternate is used for that invocation (a one-line note
+goes to stderr; stdout stays clean for scripts). Explicit ZENTAO_URL targets
+are never probed. Tune with ZENTAO_PROBE_TIMEOUT (default 2s).
 
 # Session management
 zentao login                         # verify credentials, warm session cache

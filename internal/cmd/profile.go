@@ -4,15 +4,30 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rioliu/zentao-cli-go/internal/profile"
 )
+
+// stringList collects a repeatable string flag (--alternate).
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ",") }
+
+func (l *stringList) Set(v string) error {
+	*l = append(*l, v)
+	return nil
+}
 
 const profileUsage = `Usage:
   zentao profile                     list profiles (current marked with *)
   zentao profile <key|alias>         switch current profile
   zentao profile use <key|alias>     same as above
-  zentao profile add --server URL --account A [--as alias] [--save-password | --password P]
+  zentao profile add --server URL --account A [--as alias] [--alternate URL]... [--save-password | --password P]
+
+--alternate declares another address of the SAME instance (e.g. the public
+endpoint next to an office-LAN one); when --server does not answer a TCP
+probe, the first reachable alternate is used for the invocation.
   zentao profile remove <key|alias>
 
 The canonical profile key is account@server (official zentao-cli format).
@@ -72,11 +87,15 @@ func profileList() int {
 		if alias != "" {
 			alias = " (" + alias + ")"
 		}
+		alts := ""
+		if len(p.Alternates) > 0 {
+			alts = "  alternates: " + strings.Join(p.Alternates, ", ")
+		}
 		auth := "password: env/on-demand"
 		if p.Password != "" {
 			auth = "password: saved"
 		}
-		fmt.Printf("%s %s%s  account=%s  %s\n", marker, k, alias, p.Account, auth)
+		fmt.Printf("%s %s%s  account=%s  %s%s\n", marker, k, alias, p.Account, auth, alts)
 	}
 	return 0
 }
@@ -88,10 +107,12 @@ func profileAdd(args []string) int {
 	password := fs.String("password", "", "account password (prefer --save-password with ZENTAO_PASSWORD)")
 	savePassword := fs.Bool("save-password", false, "store ZENTAO_PASSWORD in the profile file")
 	as := fs.String("as", "", "short alias for this profile")
+	var alternates stringList
+	fs.Var(&alternates, "alternate", "alternate endpoint of the SAME instance (repeatable), used when --server is unreachable")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	p := profile.Profile{Server: *server, Account: *account, Alias: *as}
+	p := profile.Profile{Server: *server, Account: *account, Alias: *as, Alternates: []string(alternates)}
 	if *password != "" {
 		p.Password = *password
 	}
