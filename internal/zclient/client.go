@@ -27,6 +27,7 @@ package zclient
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -373,7 +375,9 @@ func (c *Client) Comment(objectType string, objectID int, html string) error {
 		{"objectID", fmt.Sprint(objectID)},
 	}
 	form := url.Values{"comment": {html}}
-	apply, err := c.webPost("/index.php?m=action&f=comment", query, form)
+	apply, err := c.webWithHeal(func() ([]byte, error) {
+		return c.webPost("/index.php?m=action&f=comment", query, form)
+	})
 	if err != nil {
 		return err
 	}
@@ -400,7 +404,9 @@ func (c *Client) Comments(objectType string, objectID int) ([]Action, error) {
 		{"objectType", objectType},
 		{"objectID", fmt.Sprint(objectID)},
 	}
-	raw, err := c.webGet("/index.php?m=action&f=ajaxGetList", query)
+	raw, err := c.webWithHeal(func() ([]byte, error) {
+		return c.webGet("/index.php?m=action&f=ajaxGetList", query)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -427,6 +433,14 @@ func (c *Client) WebProbe(path string, query [][2]string, formKey, formValue str
 }
 
 // webLogin establishes a classic web session (separate from the REST token).
+//
+// The login form carries passwordStrength (mirror of zentao's client-side
+// computePasswordStrength, module/user/js/common.ui.js). The server trusts the
+// posted value (module/user/zen.php: $passwordStrength = (int)$this->post->passwordStrength)
+// and flags the session for a forced password change when it is below the
+// safe.policy mode. Posting nothing reads as 0 and gets every account flagged
+// on servers with the policy enabled (zentao >= 22.7 turns it on), which
+// blocks ALL classic routes except my/changePassword with a bare 302.
 func (c *Client) webLogin() error {
 	if c.webUp {
 		return nil
@@ -434,7 +448,17 @@ func (c *Client) webLogin() error {
 	if c.Password == "" {
 		return fmt.Errorf("web session requires a password: the classic web realm does not accept API tokens; set ZENTAO_PASSWORD or log in with a password")
 	}
-	form := url.Values{"account": {c.Account}, "password": {c.Password}}
+	// Logging in supersedes any previous web session: start from a clean jar.
+	// The forced-password-change gate redirects every route - including
+	// m=user&f=login itself - while a flagged session cookie is present, so
+	// re-login must not resend the old zentaosid.
+	jar, _ := cookiejar.New(nil)
+	c.web.Jar = jar
+	form := url.Values{
+		"account":          {c.Account},
+		"password":         {c.Password},
+		"passwordStrength": {strconv.Itoa(passwordStrength(c.Password))},
+	}
 	resp, err := c.webPost("/index.php?m=user&f=login", nil, form)
 	if err != nil {
 		return fmt.Errorf("web login: %w", err)
@@ -522,6 +546,14 @@ func (c *Client) webDo(req *http.Request) ([]byte, error) {
 	if os.Getenv("ZT_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "[zt-debug] %s %s -> %d (%d bytes) set-cookie: %v\n", req.Method, req.URL.RequestURI(), resp.StatusCode, len(body), resp.Header.Values("Set-Cookie"))
 	}
+	// A bare 302 to my/changePassword is the forced password change gate
+	// (safe policy): the request never reached the controller and the body is
+	// empty. Surface it as a typed error so callers can heal or explain -
+	// an empty body alone would degrade into "unexpected response: ".
+	if (resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusMovedPermanently) &&
+		strings.Contains(resp.Header.Get("Location"), "changePassword") {
+		return body, errPasswordChangeRequired
+	}
 	return body, err
 }
 
@@ -547,6 +579,73 @@ func checkWebResponse(body []byte, retry func() error) error {
 	default:
 		return fmt.Errorf("comment: unrecognized response: %s", snippet(body))
 	}
+}
+
+// errPasswordChangeRequired reports that the server redirected a classic
+// route to my/changePassword: the session user is flagged by the safe policy
+// (forced password change) and nothing but the change-password page is
+// reachable. A stale cached session can carry the flag from an earlier login;
+// one fresh login clears it unless the password itself is below the policy.
+var errPasswordChangeRequired = errors.New("server requires a password change (redirect to my/changePassword)")
+
+// webWithHeal runs do, healing a policy-flagged session once: re-login (which
+// recomputes and posts passwordStrength) and retry the call a single time. If
+// the server still demands a password change the password itself is below the
+// safe policy - actionable guidance, not a loop.
+func (c *Client) webWithHeal(do func() ([]byte, error)) ([]byte, error) {
+	raw, err := do()
+	if !errors.Is(err, errPasswordChangeRequired) {
+		return raw, err
+	}
+	c.webUp = false
+	if err := c.webLogin(); err != nil {
+		return nil, err
+	}
+	raw, err = do()
+	if errors.Is(err, errPasswordChangeRequired) {
+		return nil, fmt.Errorf("%w: the account password is below the server's safe policy; change the password once via the web UI (my -> changePassword)", err)
+	}
+	return raw, err
+}
+
+// passwordStrength mirrors zentao's computePasswordStrength
+// (module/user/model.php; the login JS sends the same value):
+// character-class bitmask digit=1, upper=2, lower=4, other=8; then
+//
+//	class sum 15 (all classes) and len >= 10 -> 2
+//	class sum 7 or 15 and len >= 6         -> 1
+//	otherwise                               -> 0
+//
+// Length is counted in bytes, matching the server's strlen-based version.
+func passwordStrength(password string) int {
+	if len(password) == 0 {
+		return 0
+	}
+	var classSum int
+	classes := map[int]bool{}
+	for i := 0; i < len(password); i++ {
+		b := password[i]
+		switch {
+		case b >= '0' && b <= '9':
+			classes[1] = true
+		case b >= 'A' && b <= 'Z':
+			classes[2] = true
+		case b >= 'a' && b <= 'z':
+			classes[4] = true
+		default:
+			classes[8] = true
+		}
+	}
+	for k := range classes {
+		classSum += k
+	}
+	if classSum == 15 && len(password) >= 10 {
+		return 2
+	}
+	if (classSum == 7 || classSum == 15) && len(password) >= 6 {
+		return 1
+	}
+	return 0
 }
 
 func snippet(b []byte) string {
