@@ -10,7 +10,7 @@ import (
 
 const testcaseUsage = `Usage:
   zentao testcase create --product N --title T [options]
-  zentao testcase get <id>
+  zentao testcase get <id> [--json]
   zentao testcase list [--mine | --product N | --execution N | --project N] [--page N] [--json]
 
 Create options:
@@ -35,7 +35,11 @@ not supported - every step is a flat 'step' row.
 
 Server quirks (specs/overrides.yaml): productID travels as a query
 parameter, never in the body; list items carry id 'case_<n>' and caseID <n> -
-this CLI shows caseID so numbers match testcase get.`
+this CLI shows caseID so numbers match testcase get.
+
+testcase get prints the raw JSON object: precondition is a string and steps
+are rows of {step, expect, type, name, parent} - the machine-readable case
+content (--json makes the contract explicit for pipeline callers).`
 
 // testcaseTypes are the case types the server's form accepts
 // (module/testcase/config/form.php typeList).
@@ -196,6 +200,16 @@ func testcaseCreate(args []string) int {
 func testcaseGet(args []string) int {
 	id, ok := parseID(args, "testcase get")
 	if !ok {
+		return 2
+	}
+	// --json marks the machine-readable contract: the output is the raw JSON
+	// object with precondition as a string and steps as paired {step, expect}
+	// rows. Everything else is a usage error, not a silent ignore.
+	for _, a := range args[1:] {
+		if a == "--json" || a == "-json" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "ERROR: unexpected argument %q (testcase get takes <id> [--json])\n", a)
 		return 2
 	}
 	client, err := newClient()
