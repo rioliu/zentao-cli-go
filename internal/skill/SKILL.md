@@ -113,6 +113,14 @@ zentao testtask create --product 3 --name 'M1 regression' --build 5 \
   --begin 2026-11-24 --end 2026-12-05 --type system --owner qa1
 zentao testtask get 2; zentao testtask list --product 3
 
+# Report results on a testtask (web realm, like comment add):
+# link cases first (idempotent), then record + verify results
+zentao testtask link-cases 2 --cases 12,13
+zentao testtask runs 2 --json        # case, result (untested|pass|fail|block|n/a), note
+zentao testtask run-result 2 12 --result fail --note '<p>expected X, got Y</p>'
+zentao testtask run-result 2 13 --result pass --attach shot.png
+zentao testtask run-results 2 --file results.json  # [{"case":12,"result":"pass","note":"..."}]
+
 # List work in a scope (default: my open items)
 zentao bug list                       # my bugs
 zentao task list --execution 2        # sprint scope

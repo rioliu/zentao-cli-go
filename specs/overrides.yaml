@@ -292,3 +292,76 @@ rules:
     client_rule: >-
       display caseID as the case number so list and get agree.
       Pinned by TestTestcaseList_ItemIDFormat.
+
+  - id: web-tjson-double-envelope
+    applies: "GET /index.php?m=<module>&f=<page>&t=json (any zin page)"
+    verified: "22.4"
+    spec_claim: not in the REST spec at all (classic web realm)
+    server_behavior: >-
+      t=json wraps the page's view data as {"status":"success","data":"<json>"},
+      where data is a JSON-encoded STRING (double encoded). Row collections
+      inside may encode as a JSON array or as an object keyed by row id,
+      depending on whether the PHP array keys are sequential from 0.
+    client_rule: >-
+      decode the envelope, then the data string; accept row collections in
+      both array and keyed-object shapes. Pinned by the testruns contract
+      tests via TesttaskRuns/RunResults.
+
+  - id: testtask-linkcase-replace
+    applies: "POST /index.php?m=testtask&f=linkCase (web realm)"
+    verified: "22.4"
+    spec_claim: not in the REST spec (there is no REST link endpoint)
+    server_behavior: >-
+      linking inserts into zt_testrun with REPLACE semantics on the
+      (task, case) unique key: re-linking an already-linked case rotates the
+      run id and WIPES the run's result state (lastRunResult, lastRunDate,
+      lastRunner reset).
+    client_rule: >-
+      testtask link-cases skips already-linked cases (client-side
+      idempotency) and reports them as 'already linked'.
+      Pinned by TestTesttaskLinkCase_ReLinkResetsRunState.
+
+  - id: testtask-cases-project-gate
+    applies: "GET /index.php?m=testtask&f=cases (runs listing page)"
+    verified: "22.4"
+    server_behavior: >-
+      the page starts with common.checkPrivByObject('project', task.project)
+      and project checkPriv returns false for project id 0 by construction
+      (!empty($projectID) && ...): testtasks without a project are always
+      denied with the 'no access to this project' alert. The groupCase page
+      has no project gate and serves the same run rows (under 'cases').
+    client_rule: >-
+      read runs from the cases page and fall back to groupCase on refusal;
+      both carry the run rows in t=json mode.
+      Pinned by TestServerQuirk_TesttaskCasesProjectGate.
+
+  - id: testtask-runcase-derived-result
+    applies: "POST /index.php?m=testtask&f=runCase (web realm)"
+    verified: "22.4"
+    spec_claim: not in the REST spec (there are no result endpoints)
+    server_behavior: >-
+      the recorded case result is DERIVED from the step rows: 'n/a' and
+      'pass' rows count as pass, the first fail/blocked row decides (fail
+      wins). 'n/a' can therefore never be a case result on this route. Step
+      rows must be keyed by the case's current step ids (0 for step-less
+      cases): unknown keys are silently dropped when results are read back
+      (rows merge onto the step group). Notes (real texts) are preserved
+      verbatim for every result value.
+    client_rule: >-
+      send one row per runnable step (group rows excluded), all carrying the
+      requested result, with the note on the first row; route n/a through
+      batchRun. Pinned by TestServerQuirk_RunResultRouting,
+      TestServerQuirk_StepRowsRequireRealStepIDs and
+      TestTesttaskRunResult_RoundTripNoteAndRerun.
+
+  - id: testtask-batchrun-verbatim-result
+    applies: "POST /index.php?m=testtask&f=batchRun (web realm)"
+    verified: "22.4"
+    server_behavior: >-
+      the case result is stored VERBATIM (the only route that records n/a),
+      but processStepResults rebuilds the step rows and DROPS the notes when
+      the result is 'pass'; fail/blocked/n/a keep their notes.
+    client_rule: >-
+      batch everything except pass-with-note entries; those go through
+      runCase where the note survives.
+      Pinned by TestServerQuirk_RunResultRouting.

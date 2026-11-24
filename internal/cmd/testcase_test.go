@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -170,5 +171,49 @@ func TestTestcaseList_ShowsCaseID(t *testing.T) {
 	}
 	if strings.Contains(out, "case_7") {
 		t.Errorf("output %q must not show the raw 'case_7' id", out)
+	}
+}
+
+// R4: testcase get --json emits parseable JSON with the case content the run
+// pipeline parses: precondition as a string, steps as paired {step, expect}
+// arrays.
+func TestTestcaseGet_JSONFlagEmitsStructuredSteps(t *testing.T) {
+	serveAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api.php/v2/testcases/5" {
+			io.WriteString(w, `{"status":"success","testcase":{"id":5,"title":"t","precondition":"pre",`+
+				`"steps":[{"id":78,"type":"step","step":"s1","expect":"e1"},`+
+				`{"id":79,"type":"step","step":"s2","expect":"e2"}]}}`)
+			return
+		}
+		http.Error(w, "unexpected request", http.StatusNotFound)
+	})
+
+	out := captureStdout(t, func() {
+		if code := runTestcase([]string{"get", "5", "--json"}); code != 0 {
+			t.Errorf("code = %d, want 0", code)
+		}
+	})
+	var obj struct {
+		Precondition string `json:"precondition"`
+		Steps        []struct {
+			Step   string `json:"step"`
+			Expect string `json:"expect"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if obj.Precondition != "pre" {
+		t.Errorf("precondition = %q, want pre", obj.Precondition)
+	}
+	if len(obj.Steps) != 2 || obj.Steps[0].Step != "s1" || obj.Steps[1].Expect != "e2" {
+		t.Errorf("steps = %+v, want paired step/expect rows", obj.Steps)
+	}
+}
+
+// Unknown arguments on get are rejected instead of silently ignored.
+func TestTestcaseGet_RejectsUnknownArgs(t *testing.T) {
+	if code := runTestcase([]string{"get", "5", "--bogus"}); code != 2 {
+		t.Errorf("code = %d, want 2", code)
 	}
 }

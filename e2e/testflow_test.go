@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -73,8 +74,71 @@ func TestE2E_TestResourceFlow(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("testtask get: code=%d out=%q err=%q", code, out, errOut)
 	}
+
+	code, out, errOut = run(t, env, "", "testtask", "get", fmt.Sprint(runID))
+	if code != 0 {
+		t.Fatalf("testtask get: code=%d out=%q err=%q", code, out, errOut)
+	}
 	if !strings.Contains(out, "e2e-run-"+suffix) {
 		t.Errorf("testtask get output missing the run name: %s", out)
+	}
+
+	// The agent report loop: link the case into the run, inspect run state,
+	// record results (reruns overwrite), verify the writes landed.
+	code, out, errOut = run(t, env, "", "testtask", "link-cases", fmt.Sprint(runID), "--cases", fmt.Sprint(caseID))
+	if code != 0 {
+		t.Fatalf("link-cases: code=%d out=%q err=%q", code, out, errOut)
+	}
+	code, out, errOut = run(t, env, "", "testtask", "link-cases", fmt.Sprint(runID), "--cases", fmt.Sprint(caseID))
+	if code != 0 || !strings.Contains(out, "already linked") {
+		t.Fatalf("re-link must no-op on already-linked cases: code=%d out=%q err=%q", code, out, errOut)
+	}
+
+	code, out, errOut = run(t, env, "", "testtask", "runs", fmt.Sprint(runID), "--json")
+	if code != 0 {
+		t.Fatalf("runs: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, "\"case\": "+fmt.Sprint(caseID)) || !strings.Contains(out, "untested") {
+		t.Errorf("runs must list the fresh case as untested: %s", out)
+	}
+
+	note := "<p>e2e evidence " + suffix + "</p>"
+	code, out, errOut = run(t, env, "", "testtask", "run-result", fmt.Sprint(runID), fmt.Sprint(caseID),
+		"--result", "fail", "--note", note)
+	if code != 0 {
+		t.Fatalf("run-result: code=%d out=%q err=%q", code, out, errOut)
+	}
+	code, out, errOut = run(t, env, "", "testtask", "runs", fmt.Sprint(runID), "--json")
+	if code != 0 {
+		t.Fatalf("runs after result: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, "\"result\": \"fail\"") || !strings.Contains(out, "e2e evidence "+suffix) {
+		t.Errorf("runs must show the recorded result and note: %s", out)
+	}
+
+	// Rerun with pass - the run row is overwritten, the note kept.
+	code, out, errOut = run(t, env, "", "testtask", "run-result", fmt.Sprint(runID), fmt.Sprint(caseID),
+		"--result", "pass", "--note", note)
+	if code != 0 {
+		t.Fatalf("run-result rerun: code=%d out=%q err=%q", code, out, errOut)
+	}
+
+	// Batch mode: n/a rides the batch route (one round-trip).
+	batch := fmt.Sprintf(`[{"case": %d, "result": "n/a", "note": "skipped %s"}]`, caseID, suffix)
+	batchFile := fmt.Sprintf("%s/results.json", t.TempDir())
+	if err := os.WriteFile(batchFile, []byte(batch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = run(t, env, "", "testtask", "run-results", fmt.Sprint(runID), "--file", batchFile)
+	if code != 0 {
+		t.Fatalf("run-results: code=%d out=%q err=%q", code, out, errOut)
+	}
+	code, out, errOut = run(t, env, "", "testtask", "runs", fmt.Sprint(runID), "--json")
+	if code != 0 {
+		t.Fatalf("runs after batch: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if !strings.Contains(out, "\"result\": \"n/a\"") || !strings.Contains(out, "skipped "+suffix) {
+		t.Errorf("runs must show the batched n/a result and note: %s", out)
 	}
 
 	// Lists show the created objects with #<numeric id>.

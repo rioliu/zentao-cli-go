@@ -246,12 +246,28 @@ zentao testtask create --product 3 --name 'M1 regression' --build 5 \
   --begin 2026-11-24 --end 2026-12-05 --type system --owner qa1
 zentao testtask get 2
 zentao testtask list --product 3
+
+# The result-reporting loop (agentic e2e pipelines): link cases into the run,
+# then record and verify results. Results are a WEB-realm action like
+# comment add - a REST token alone is not enough.
+zentao testtask link-cases 2 --cases 12,13    # idempotent (skips linked)
+zentao testtask runs 2 --json                 # case, result, date, note, title
+zentao testtask run-result 2 12 --result fail --note '<p>expected X, got Y</p>'
+zentao testtask run-result 2 13 --result pass --attach shot.png
+# batch: one round-trip (pass-with-note entries go individually, see quirks)
+zentao testtask run-results 2 --file results.json
 ```
 
 Server quirks (specs/overrides.yaml): productID travels in the query for
 `testcase`/`testtask` creates but in the BODY for `build create`; `--system`
 and `--status` are server-required although the spec marks them optional;
 `build get` is unusable (server-side permission bug) - use `build list`.
+Result recording quirks: the runCase route derives the case result from step
+rows (so `--result n/a` rides the batch route which stores results verbatim),
+the batch route drops notes on pass results (pass-with-note entries are sent
+per case), re-linking a case resets its run state (link-cases is idempotent
+client-side), and the runs page is denied for project-less testtasks (the
+CLI falls back to the group view automatically).
 
 ### 8. Work with multiple Zentao instances
 
@@ -315,8 +331,9 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao story create \| update \| get \| list \| link \| unlink \| activate \| change \| close` | story lifecycle (link/unlink keeps field + relation rows in sync) |
 | `zentao task create \| update \| get \| list \| move \| delete \| start \| finish \| close \| activate` | task lifecycle (`move` repairs the story-zeroing/stale-project server bugs) |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
-| `zentao testcase create --product N --title T [options]` \| `get <id>` \| `list` | test cases (steps/expects pair 1:1; `--step`/`--expect` repeatable, `--steps-file`/`--expects-file` one per line) |
+| `zentao testcase create --product N --title T [options]` \| `get <id> [--json]` \| `list` | test cases (steps/expects pair 1:1; `--step`/`--expect` repeatable, `--steps-file`/`--expects-file` one per line; `get` prints the JSON object with structured steps) |
 | `zentao testtask create --product N --name T --build N --begin D --end D [options]` \| `get <id>` \| `list` | test runs (测试单; `--status` required by the server, defaults to `wait`) |
+| `zentao testtask link-cases <id> --cases 1,2,3` \| `runs <id> [--json]` \| `run-result <id> <caseID> --result pass\|fail\|block\|n/a` \| `run-results <id> --file F` | run case linking and result recording (web realm; `--note`/`--note-file` evidence, `--attach` files) |
 | `zentao build create --product N --name T --system N [options]` \| `list --execution N \| --project N` | builds (提测构建) a testtask runs against (`--system` = 所属应用 id) |
 | `zentao product list [--page N] [--json]` \| `zentao product get <id>` | discover product IDs for `--product` on story/bug create |
 | `zentao project create --name N --product 3[,4] [options]` \| `zentao project get <id>` \| `zentao project list [--page N] [--json]` | projects (product binding mandatory - prevents the server's auto-product path) |

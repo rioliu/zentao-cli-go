@@ -432,6 +432,21 @@ func (c *Client) WebProbe(path string, query [][2]string, formKey, formValue str
 	return string(body), err
 }
 
+// WebGetProbe is the GET variant of WebProbe: a raw classic-route GET with
+// query parameters in the exact order given. Contract tests use it to pin
+// page behavior (e.g. permission gates).
+func (c *Client) WebGetProbe(path string, query [][2]string) (string, error) {
+	if err := c.webLogin(); err != nil {
+		return "", err
+	}
+	params := make([]param, len(query))
+	for i, kv := range query {
+		params[i] = param{kv[0], kv[1]}
+	}
+	body, err := c.webGet(path, params)
+	return string(body), err
+}
+
 // webLogin establishes a classic web session (separate from the REST token).
 //
 // The login form carries passwordStrength (mirror of zentao's client-side
