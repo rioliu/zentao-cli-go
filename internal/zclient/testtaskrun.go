@@ -121,6 +121,42 @@ type BatchRunEntry struct {
 	Rows    []RunResultRow
 }
 
+// isLoginExpired recognizes the session-expiry envelope classic routes
+// answer with when the cached web session (zentaosid) has died server-side.
+// The same literals are matched by checkWebResponse in the comment path.
+func isLoginExpired(raw []byte) bool {
+	s := string(raw)
+	return strings.Contains(s, "登录已超时") ||
+		strings.Contains(s, `\u767b\u5f55\u5df2\u8d85\u65f6`) || // json_encode escapes non-ASCII on the wire
+		strings.Contains(s, `"load":"login"`) || strings.Contains(s, `"load": "login"`)
+}
+
+// webRetryExpired runs a classic-route call and heals a dead cached web
+// session once: the cache seeds webUp (proven lazily), so a rejected call
+// must re-login and retry rather than fail - the same contract
+// checkWebResponse provides for comments.
+func (c *Client) webRetryExpired(do func() ([]byte, error)) ([]byte, error) {
+	raw, err := c.webWithHeal(do)
+	if err != nil {
+		return nil, err
+	}
+	if !isLoginExpired(raw) {
+		return raw, nil
+	}
+	c.webUp = false
+	if err := c.webLogin(); err != nil {
+		return nil, err
+	}
+	raw, err = c.webWithHeal(do)
+	if err != nil {
+		return nil, err
+	}
+	if isLoginExpired(raw) {
+		return nil, fmt.Errorf("web session rejected after re-login: %s", snippet(raw))
+	}
+	return raw, nil
+}
+
 // pageEnvelope is the t=json response shape: the page data is JSON-encoded
 // into a STRING under "data" (double encoded).
 type pageEnvelope struct {
@@ -191,7 +227,7 @@ func (c *Client) TesttaskRuns(testtaskID int) ([]TesttaskRun, error) {
 		{"pageID", "1"},
 		{"t", "json"},
 	}
-	raw, err := c.webWithHeal(func() ([]byte, error) {
+	raw, err := c.webRetryExpired(func() ([]byte, error) {
 		return c.webGet("/index.php?m=testtask&f=cases", cases)
 	})
 	if err != nil {
@@ -207,7 +243,7 @@ func (c *Client) TesttaskRuns(testtaskID int) ([]TesttaskRun, error) {
 	}
 	// Fallback: the cases page refused (project gate) - the group view has
 	// no project check and carries the same run rows.
-	raw, err = c.webWithHeal(func() ([]byte, error) {
+	raw, err = c.webRetryExpired(func() ([]byte, error) {
 		return c.webGet("/index.php?m=testtask&f=groupCase", []param{
 			{"taskID", strconv.Itoa(testtaskID)},
 			{"browseType", "all"},
@@ -244,7 +280,7 @@ func (c *Client) LinkTestcases(testtaskID int, refs []CaseRef) error {
 		form.Set(fmt.Sprintf("version[%d]", i), strconv.Itoa(ref.Version))
 	}
 	// linkCase($testtaskID, $type, $param, ...) - params in signature order.
-	raw, err := c.webWithHeal(func() ([]byte, error) {
+	raw, err := c.webRetryExpired(func() ([]byte, error) {
 		return c.webPost("/index.php?m=testtask&f=linkCase", []param{
 			{"taskID", strconv.Itoa(testtaskID)},
 			{"type", "all"},
@@ -283,7 +319,7 @@ func (c *Client) RecordRunResult(testtaskID, runID, caseID, version int, rows []
 		form.Set("version", strconv.Itoa(version))
 		return c.webPost("/index.php?m=testtask&f=runCase", query, form)
 	}
-	raw, err := c.webWithHeal(do)
+	raw, err := c.webRetryExpired(do)
 	if err != nil {
 		return err
 	}
@@ -317,7 +353,7 @@ func (c *Client) BatchRunResults(testtaskID, productID int, entries []BatchRunEn
 		}
 	}
 	// batchRun($productID, $orderBy, $from, $testtaskID, $confirm).
-	raw, err := c.webWithHeal(func() ([]byte, error) {
+	raw, err := c.webRetryExpired(func() ([]byte, error) {
 		return c.webPost("/index.php?m=testtask&f=batchRun", []param{
 			{"productID", strconv.Itoa(productID)},
 			{"orderBy", "id_desc"},
@@ -339,7 +375,7 @@ func (c *Client) RunResults(runID int) ([]TestResult, error) {
 		return nil, err
 	}
 	// results($runID, $caseID, $version, $status, $type, $deployID).
-	raw, err := c.webWithHeal(func() ([]byte, error) {
+	raw, err := c.webRetryExpired(func() ([]byte, error) {
 		return c.webGet("/index.php?m=testtask&f=results", []param{
 			{"runID", strconv.Itoa(runID)},
 			{"caseID", "0"},
