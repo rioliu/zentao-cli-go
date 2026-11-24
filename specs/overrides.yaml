@@ -230,3 +230,65 @@ rules:
       send parent in the create/update body when --parent is passed; omit the
       field otherwise (absent = root task, explicit 0 = reparent-to-root).
       Pinned by TestTaskSubtask_ParentPersisted and TestE2E_TaskCreateSubtask.
+
+  - id: test-module-create-productid-query
+    applies: "POST /testcases, /testtasks (create)"
+    verified: "22.4"
+    spec_claim: productID in requestBody (required)
+    server_behavior: >-
+      required-param check reads QUERY only; body placement rejected with
+      'Missing required parameter: productID' (same quirk as stories/bugs).
+    client_rule: >-
+      send productID as a query parameter, never in the body.
+      Pinned by TestTestcaseCreate_ProductIDQueryPlacement and
+      TestE2E_TestResourceFlow.
+
+  - id: testtask-create-status-required
+    applies: "POST /testtasks (create)"
+    verified: "22.4"
+    spec_claim: "status optional (wait default), build optional"
+    server_behavior: >-
+      status is required ('『当前状态』不能为空') and build 0 is rejected
+      ('『提测构建』不能为空') - a testtask always runs against an existing
+      build. Validation errors are also envelope-unstable: they arrive as
+      {"result":"fail",...} OR {"status":"fail",...} - detect failure by the
+      message/absence of success, never by one envelope key.
+    client_rule: >-
+      always send status (defaulted to 'wait') and require --build at the
+      CLI. Pinned by TestTesttaskCreate_ServerSideRequirements and
+      TestE2E_TestResourceFlow.
+
+  - id: build-create-productid-body
+    applies: "POST /builds (create)"
+    verified: "22.4"
+    spec_claim: "system (所属应用) optional"
+    server_behavior: >-
+      product travels in the BODY ('product') - the query placement is
+      rejected ('『所属产品』不能为空'); system is required ('『所属应用』
+      不能为空') and its value is stored without validation against the
+      product's applications.
+    client_rule: >-
+      send product and system in the body; require --system at the CLI.
+      Pinned by TestBuildCreate_BodyPlacementAndSystemRequired and
+      TestE2E_TestResourceFlow.
+
+  - id: build-get-permission-quirk
+    applies: "GET /builds/{buildID}"
+    verified: "22.4"
+    server_behavior: >-
+      answers '您无权访问该项目！' even for the admin who created the build
+      - single-build reads are unusable; the scoped list routes
+      (/executions/{id}/builds, /projects/{id}/builds) work fine.
+    client_rule: >-
+      no build get command; find build IDs via build list.
+      Pinned by TestBuildCreate_BodyPlacementAndSystemRequired.
+
+  - id: testcase-list-id-format
+    applies: "GET /products/{id}/testcases (list items)"
+    verified: "22.4"
+    server_behavior: >-
+      items carry id 'case_<n>' (string) alongside caseID <n> (numeric);
+      GET /testcases/{id} takes the numeric n.
+    client_rule: >-
+      display caseID as the case number so list and get agree.
+      Pinned by TestTestcaseList_ItemIDFormat.

@@ -11,6 +11,9 @@ const listUsage = `Usage:
   zentao story list [--mine | --product N | --execution N | --project N] [--page N] [--json]
   zentao task list  [--mine | --execution N | --project N] [--page N] [--json]
   zentao bug list   [--mine | --product N | --execution N | --project N] [--page N] [--json]
+  zentao testcase list [--mine | --product N | --execution N | --project N] [--page N] [--json]
+  zentao testtask list [--mine | --product N | --execution N | --project N] [--page N] [--json]
+  zentao build list --execution N | --project N [--page N] [--json]
 
 Default scope is --mine (your open work). Output is one line per item
 (#id  status  assignee  title); --json prints the raw objects.
@@ -22,6 +25,7 @@ Note: only scoped routes are used - the server answers the bare list routes
 type listTarget struct {
 	key    string            // response array key
 	title  string            // display field for the item title
+	idKey  string            // id field to display (default "id")
 	scopes map[string]string // scope flag -> path template (%d = scope id)
 }
 
@@ -45,6 +49,29 @@ var listTargets = map[string]listTarget{
 		scopes: map[string]string{
 			"mine": "/my/bugs", "product": "/products/%d/bugs",
 			"execution": "/executions/%d/bugs", "project": "/projects/%d/bugs",
+		},
+	},
+	"testcase": {
+		key: "testcases", title: "title", idKey: "caseID",
+		scopes: map[string]string{
+			"mine": "/my/testcases", "product": "/products/%d/testcases",
+			"execution": "/executions/%d/testcases", "project": "/projects/%d/testcases",
+		},
+	},
+	"testtask": {
+		key: "testtasks", title: "name",
+		scopes: map[string]string{
+			"mine": "/my/testtasks", "product": "/products/%d/testtasks",
+			"execution": "/executions/%d/testtasks", "project": "/projects/%d/testtasks",
+		},
+	},
+	// Builds have no /my/builds and no product-scoped route on the server
+	// (specs/overrides.yaml epic-list-empty-body class of gaps) - the caller
+	// must name --execution or --project explicitly.
+	"build": {
+		key: "builds", title: "name",
+		scopes: map[string]string{
+			"execution": "/executions/%d/builds", "project": "/projects/%d/builds",
 		},
 	},
 }
@@ -92,7 +119,12 @@ func runList(module string, args []string) int {
 		}
 	}
 	if scope == "" {
-		scope = "mine" // --mine is the default
+		if _, ok := target.scopes["mine"]; ok {
+			scope = "mine" // --mine is the default
+		} else {
+			fmt.Fprintf(os.Stderr, "ERROR: %s list needs --execution N or --project N\n", module)
+			return 2
+		}
 	}
 	path := target.scopes[scope]
 	if path == "" {
@@ -147,8 +179,12 @@ func runList(module string, args []string) int {
 		if assignee == "" {
 			assignee = "-"
 		}
+		idKey := target.idKey
+		if idKey == "" {
+			idKey = "id"
+		}
 		fmt.Printf("#%s  %-10s %-12s %s\n",
-			fmt.Sprint(item["id"]), fmt.Sprint(item["status"]), assignee, fmt.Sprint(item[target.title]))
+			fmt.Sprint(item[idKey]), fmt.Sprint(item["status"]), assignee, fmt.Sprint(item[target.title]))
 	}
 	if wrapped.Pager.PageTotal > wrapped.Pager.PageID {
 		fmt.Fprintf(os.Stderr, "page %d/%d (%d items total) - use --page N\n",
