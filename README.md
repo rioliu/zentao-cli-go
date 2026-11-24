@@ -222,7 +222,38 @@ zentao metric update-dashboard
 zentao metric update-lib           # warns about partial server-side errors
 ```
 
-### 7. Work with multiple Zentao instances
+### 7. Test: builds, test cases and test runs
+
+The test module's creation loop: a **build** (提测构建) is what a **testtask**
+(测试单 / test run) executes against, and **testcases** (用例) are the cases it
+runs. Steps and expects pair 1:1 by position.
+
+```bash
+# The build under test (a testtask without a build is rejected server-side)
+zentao build create --product 3 --name 'v1.2-rc1' --system 1 --builder dev1
+zentao build list --execution 13        # builds have no --mine scope
+
+# Cases with paired steps/expects (file forms: one step per line)
+zentao testcase create --product 3 --title 'AIR-ED-01 trigger happy path' \
+  --type feature --story 41 --pri 1 \
+  --step 'log in as editor' --expect 'dashboard loads' \
+  --step 'trigger AI review' --expect 'task row appears'
+zentao testcase get 12
+zentao testcase list --product 3
+
+# The test run
+zentao testtask create --product 3 --name 'M1 regression' --build 5 \
+  --begin 2026-11-24 --end 2026-12-05 --type system --owner qa1
+zentao testtask get 2
+zentao testtask list --product 3
+```
+
+Server quirks (specs/overrides.yaml): productID travels in the query for
+`testcase`/`testtask` creates but in the BODY for `build create`; `--system`
+and `--status` are server-required although the spec marks them optional;
+`build get` is unusable (server-side permission bug) - use `build list`.
+
+### 8. Work with multiple Zentao instances
 
 Profiles mirror the official zentao-cli semantics: the canonical key is
 **`account@server`**, the *current* profile is the one switched to most
@@ -249,7 +280,7 @@ the session cache: entries are keyed `server|account`, so two profiles on the
 same account reuse the same sessions, and adding the same `account@server`
 twice updates one entry (alias and saved password are preserved).
 
-### 8. Install the skill for a coding agent (optional)
+### 9. Install the skill for a coding agent (optional)
 
 ```bash
 zentao add-skill pi        # Pi         (~/.pi/agent/skills)
@@ -261,7 +292,7 @@ zentao add-skill --dir X   # any custom skills directory
 The skill is a portable `SKILL.md` (agentskills.io spec). Restart the agent
 after installing.
 
-### 9. Manage sessions
+### 10. Manage sessions
 
 ```bash
 zentao login               # verify the current target, re-auth on demand
@@ -284,6 +315,9 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao story create \| update \| get \| list \| link \| unlink \| activate \| change \| close` | story lifecycle (link/unlink keeps field + relation rows in sync) |
 | `zentao task create \| update \| get \| list \| move \| delete \| start \| finish \| close \| activate` | task lifecycle (`move` repairs the story-zeroing/stale-project server bugs) |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
+| `zentao testcase create --product N --title T [options]` \| `get <id>` \| `list` | test cases (steps/expects pair 1:1; `--step`/`--expect` repeatable, `--steps-file`/`--expects-file` one per line) |
+| `zentao testtask create --product N --name T --build N --begin D --end D [options]` \| `get <id>` \| `list` | test runs (测试单; `--status` required by the server, defaults to `wait`) |
+| `zentao build create --product N --name T --system N [options]` \| `list --execution N \| --project N` | builds (提测构建) a testtask runs against (`--system` = 所属应用 id) |
 | `zentao product list [--page N] [--json]` \| `zentao product get <id>` | discover product IDs for `--product` on story/bug create |
 | `zentao project create --name N --product 3[,4] [options]` \| `zentao project get <id>` \| `zentao project list [--page N] [--json]` | projects (product binding mandatory - prevents the server's auto-product path) |
 | `zentao project link-story <id> --stories 36[,41]` \| `zentao project unlink-story <id> --story 36` | project story membership, verified by read-back |

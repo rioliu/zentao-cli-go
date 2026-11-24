@@ -1,12 +1,12 @@
 ---
 name: zentao-cli-go
-description: Operate Zentao (禅道) project management via the zentao Go CLI - add and list comments on any object (story, task, bug, epic, testcase...), manage connection profiles for multiple Zentao instances, and verify login. Use when the user mentions zentao, 禅道, comments, 评论, 留言, stories, 需求, bugs, epics, or working with Zentao objects.
+description: Operate Zentao (禅道) project management via the zentao Go CLI - add and list comments on any object (story, task, bug, epic, testcase...), create test resources (test cases 测试用例, test runs 测试单, builds 提测), manage connection profiles for multiple Zentao instances, and verify login. Use when the user mentions zentao, 禅道, comments, 评论, 留言, stories, 需求, bugs, epics, test cases, 测试用例, 测试单, or working with Zentao objects.
 license: MIT
 compatibility: Requires the `zentao` binary (brew install rioliu/tap/zentao-cli-go) and ZENTAO_URL/ZENTAO_ACCOUNT/ZENTAO_PASSWORD or a saved profile. Tested with Zentao open source 22.4.
 metadata:
   author: Rio Liu
   repository: https://github.com/rioliu/zentao-cli-go
-  keywords: [zentao, 禅道, comment, 评论, story, bug, epic, profile]
+  keywords: [zentao, 禅道, comment, 评论, story, bug, epic, testcase, testtask, profile]
 ---
 
 # zentao CLI (Go)
@@ -19,6 +19,8 @@ Zentao instances via profiles.
 
 - Creating and driving development work: stories (requirements), tasks
   (development work), bugs (issues found in testing)
+- Creating test resources: test cases (测试用例), test runs (测试单) and the
+  builds (提测) they run against
 - Adding comments/评论/备注/留言 to Zentao objects (any type: story, task, bug, epic, ...)
 - Listing comments on an object
 - Switching between Zentao instances (profiles)
@@ -99,10 +101,23 @@ zentao bug resolve 12 --resolution fixed --comment '<p>fixed</p>'; zentao bug cl
 zentao metric update-dashboard      # run after bulk story/task changes
 zentao metric update-lib
 
+# Test resources: build (提测) > testcase (用例) > testtask (测试单)
+# steps/expects pair 1:1 by position; productID goes in the query for
+# testcase/testtask create but in the BODY for build create (server quirks)
+zentao build create --product 3 --name 'v1.2-rc1' --system 1 --builder dev1
+zentao build list --execution 13      # no --mine scope for builds
+zentao testcase create --product 3 --title 'AIR-ED-01 happy path' \
+  --type feature --story 41 --step 'do X' --expect 'see Y'
+zentao testcase get 12; zentao testcase list --product 3
+zentao testtask create --product 3 --name 'M1 regression' --build 5 \
+  --begin 2026-11-24 --end 2026-12-05 --type system --owner qa1
+zentao testtask get 2; zentao testtask list --product 3
+
 # List work in a scope (default: my open items)
 zentao bug list                       # my bugs
 zentao task list --execution 2        # sprint scope
 zentao story list --product 1 --json  # raw JSON
+zentao testcase list --product 3      # shows #caseID numbers (match get)
 
 # Read any object as JSON
 zentao story get 14; zentao task get 5; zentao bug get 12; zentao product get 2

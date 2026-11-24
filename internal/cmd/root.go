@@ -27,6 +27,9 @@ Usage:
   zentao [--profile <key|alias>] story link|unlink <id> --with 36[,37]
   zentao [--profile <key|alias>] task create|update|get|move|delete|start|finish|close|activate ...
   zentao [--profile <key|alias>] bug create|update|get|resolve|confirm|close|activate ...
+  zentao [--profile <key|alias>] testcase create --product N --title T [options] | get <id> | list ...
+  zentao [--profile <key|alias>] testtask create --product N --name T --build N --begin D --end D | get <id> | list ...
+  zentao [--profile <key|alias>] build create --product N --name T --system N | list --execution N | --project N
   zentao [--profile <key|alias>] product list [--page N] [--json]
   zentao [--profile <key|alias>] product get <id>
   zentao [--profile <key|alias>] project create --name N --product 3[,4] [options]
@@ -161,6 +164,12 @@ func Execute() int {
 		return runTask(args[1:])
 	case "bug":
 		return runBug(args[1:])
+	case "testcase":
+		return runTestcase(args[1:])
+	case "testtask":
+		return runTesttask(args[1:])
+	case "build":
+		return runBuild(args[1:])
 	case "product":
 		return runProduct(args[1:])
 	case "project":
