@@ -365,3 +365,23 @@ rules:
       batch everything except pass-with-note entries; those go through
       runCase where the note survives.
       Pinned by TestServerQuirk_RunResultRouting.
+
+  - id: testcase-update-steps-wipe
+    applies: "PUT /testcases/{caseID} (update)"
+    verified: "22.4"
+    spec_claim: "title required in requestBody"
+    server_behavior: >-
+      partial updates work (the required-title claim is drift), but a body
+      carrying title or precondition REPLACES the step set with whatever
+      steps the body holds - absent means wiped. pri/type/story/module
+      updates leave the step set alone. Step rows keyed by anything but the
+      row name ("1", "1.1", ...) are dropped on read-back, and the plain
+      object-row shape makes the whole PUT a silent no-op (empty response).
+    client_rule: >-
+      when updating title or precondition without passing steps, re-submit
+      the current steps keyed by row name (preserves nested groups); user
+      passed steps replace the set as flat arrays. Empty response bodies are
+      failures. Pinned by TestTestcaseUpdate_PartialFieldsPersist,
+      TestServerQuirk_TestcaseUpdate_TitleWipesSteps,
+      TestTestcaseUpdate_RepairPayloadPreservesNested and
+      TestTestcaseUpdate_StepsReplace.

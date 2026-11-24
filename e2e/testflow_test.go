@@ -60,6 +60,23 @@ func TestE2E_TestResourceFlow(t *testing.T) {
 		}
 	}
 
+	// Rename the case without passing steps: the update wipes steps server
+	// side unless they ride along - the CLI must keep them intact.
+	code, out, errOut = run(t, env, "", "testcase", "update", fmt.Sprint(caseID),
+		"--title", "e2e-case2-"+suffix, "--pri", "2")
+	if code != 0 {
+		t.Fatalf("testcase update: code=%d out=%q err=%q", code, out, errOut)
+	}
+	code, out, errOut = run(t, env, "", "testcase", "get", fmt.Sprint(caseID))
+	if code != 0 {
+		t.Fatalf("testcase get after update: code=%d out=%q err=%q", code, out, errOut)
+	}
+	for _, want := range []string{"e2e-case2-" + suffix, "trigger AI review", "task row appears"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("after update missing %q (steps must survive the rename): %s", want, out)
+		}
+	}
+
 	// Test run against the build.
 	code, out, errOut = run(t, env, "", "testtask", "create",
 		"--product", fmt.Sprint(productID), "--name", "e2e-run-"+suffix,
