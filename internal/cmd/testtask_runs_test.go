@@ -625,3 +625,59 @@ func TestTesttaskRunResults_Errors(t *testing.T) {
 		t.Errorf("unlinked entry: code = %d, want 1", code)
 	}
 }
+
+// A dead cached web session must heal like the comment path does: the server
+// answers "login expired", the client re-logs-in and retries once. Without
+// the retry every run command fails with the developer's stale session cache.
+func TestTesttaskRuns_HealsExpiredWebSession(t *testing.T) {
+	f := &runsFake{t: t, rec: &formRecorder{}, results: map[string]string{}, testcases: map[string]string{}}
+	f.setRuns(`[{"id":11,"case":36,"version":3,"caseVersion":3,"title":"a","status":"normal","lastRunResult":"","lastRunDate":"","lastRunner":"","product":2}]`)
+
+	logins := 0
+	expired := true
+	srv := serveAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path == "/index.php" && q.Get("m") == "user" {
+			logins++
+			io.WriteString(w, `{"result":"success"}`)
+			return
+		}
+		if r.URL.Path == "/index.php" && q.Get("m") == "testtask" && q.Get("f") == "cases" {
+			if expired {
+				expired = false
+				io.WriteString(w, `{"result":false,"message":"login expired","load":"login"}`)
+				return
+			}
+			f.mu.Lock()
+			data := f.runsData
+			f.mu.Unlock()
+			io.WriteString(w, envelope(`{"runs":`+data+`}`))
+			return
+		}
+		http.Error(w, "unexpected: "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	})
+	t.Setenv("ZENTAO_PASSWORD", "pw")
+
+	// Seed the client with a "cached" dead web session: ZENTAO_SESSION_CACHE
+	// with a webSession entry makes the client skip web login up front.
+	// TestMain disables caching package-wide; re-enable it for this test.
+	t.Setenv("ZENTAO_NO_CACHE", "")
+	cache := filepath.Join(t.TempDir(), "sessions.json")
+	entry := `{"sessions":{"` + srv.URL + `|admin":{"webSession":"dead-sid"}}}`
+	if err := os.WriteFile(cache, []byte(entry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZENTAO_SESSION_CACHE", cache)
+
+	out := captureStdout(t, func() {
+		if code := runTesttask([]string{"runs", "7"}); code != 0 {
+			t.Errorf("code = %d, want 0 after session heal", code)
+		}
+	})
+	if !strings.Contains(out, "#36") {
+		t.Errorf("output must list the run after healing: %q", out)
+	}
+	if logins != 1 {
+		t.Errorf("login count = %d, want exactly 1 (the heal re-login; the seeded session skips the first login)", logins)
+	}
+}
