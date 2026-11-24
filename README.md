@@ -238,6 +238,7 @@ zentao testcase create --product 3 --title 'AIR-ED-01 trigger happy path' \
   --type feature --story 41 --pri 1 \
   --step 'log in as editor' --expect 'dashboard loads' \
   --step 'trigger AI review' --expect 'task row appears'
+zentao testcase update 12 --title 'AIR-ED-01 happy path' --pri 2
 zentao testcase get 12
 zentao testcase list --product 3
 
@@ -267,7 +268,9 @@ rows (so `--result n/a` rides the batch route which stores results verbatim),
 the batch route drops notes on pass results (pass-with-note entries are sent
 per case), re-linking a case resets its run state (link-cases is idempotent
 client-side), and the runs page is denied for project-less testtasks (the
-CLI falls back to the group view automatically).
+CLI falls back to the group view automatically). Case updates carrying
+`--title`/`--precondition` wipe the step set server-side - the CLI
+re-submits the current steps automatically.
 
 ### 8. Work with multiple Zentao instances
 
@@ -331,7 +334,7 @@ zentao logout              # drop cached sessions (the server session then
 | `zentao story create \| update \| get \| list \| link \| unlink \| activate \| change \| close` | story lifecycle (link/unlink keeps field + relation rows in sync) |
 | `zentao task create \| update \| get \| list \| move \| delete \| start \| finish \| close \| activate` | task lifecycle (`move` repairs the story-zeroing/stale-project server bugs) |
 | `zentao bug create \| update \| get \| list \| resolve \| confirm \| close \| activate` | bug lifecycle |
-| `zentao testcase create --product N --title T [options]` \| `get <id> [--json]` \| `list` | test cases (steps/expects pair 1:1; `--step`/`--expect` repeatable, `--steps-file`/`--expects-file` one per line; `get` prints the JSON object with structured steps) |
+| `zentao testcase create --product N --title T [options]` \| `update <id> [options]` \| `get <id> [--json]` \| `list` | test cases (steps/expects pair 1:1; `--step`/`--expect` repeatable, `--steps-file`/`--expects-file` one per line; `get` prints the JSON object with structured steps; updates keep the step set intact) |
 | `zentao testtask create --product N --name T --build N --begin D --end D [options]` \| `get <id>` \| `list` | test runs (测试单; `--status` required by the server, defaults to `wait`) |
 | `zentao testtask link-cases <id> --cases 1,2,3` \| `runs <id> [--json]` \| `run-result <id> <caseID> --result pass\|fail\|block\|n/a` \| `run-results <id> --file F` | run case linking and result recording (web realm; `--note`/`--note-file` evidence, `--attach` files) |
 | `zentao build create --product N --name T --system N [options]` \| `list --execution N \| --project N` | builds (提测构建) a testtask runs against (`--system` = 所属应用 id) |

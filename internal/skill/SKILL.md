@@ -108,6 +108,7 @@ zentao build create --product 3 --name 'v1.2-rc1' --system 1 --builder dev1
 zentao build list --execution 13      # no --mine scope for builds
 zentao testcase create --product 3 --title 'AIR-ED-01 happy path' \
   --type feature --story 41 --step 'do X' --expect 'see Y'
+zentao testcase update 12 --title 'AIR-ED-01 happy path v2' --pri 2
 zentao testcase get 12; zentao testcase list --product 3
 zentao testtask create --product 3 --name 'M1 regression' --build 5 \
   --begin 2026-11-24 --end 2026-12-05 --type system --owner qa1

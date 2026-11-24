@@ -217,3 +217,148 @@ func TestTestcaseGet_RejectsUnknownArgs(t *testing.T) {
 		t.Errorf("code = %d, want 2", code)
 	}
 }
+
+// --- testcase update ------------------------------------------------------
+
+// serveUpdateTestcase serves GET (step rows) and PUT (recorded) on the case.
+func serveUpdateTestcase(t *testing.T, rec *apiRecorder, stepsJSON string) {
+	t.Helper()
+	serveAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api.php/v2/testcases/7" {
+			switch r.Method {
+			case http.MethodGet:
+				rec.add(r.Method, r.URL.Path, r.URL.Query(), nil)
+				io.WriteString(w, `{"status":"success","testcase":{"steps":`+stepsJSON+`}}`)
+				return
+			case http.MethodPut:
+				rec.add(r.Method, r.URL.Path, r.URL.Query(), decodeBody(r))
+				io.WriteString(w, `{"status":"success","data":"7"}`)
+				return
+			}
+		}
+		http.Error(w, "unexpected request", http.StatusNotFound)
+	})
+}
+
+// Only the given fields travel in the PUT; fields like pri/story never touch
+// the step set, so no repair read happens.
+func TestTestcaseUpdate_SendsOnlyGivenFields(t *testing.T) {
+	rec := &apiRecorder{}
+	serveUpdateTestcase(t, rec, `[{"step":"s1","expect":"e1","type":"step","name":"1","parent":0}]`)
+
+	if code := runTestcase([]string{"update", "7", "--pri", "2", "--story", "13"}); code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if rec.count() != 1 {
+		t.Fatalf("calls = %d, want exactly one PUT (no repair GET)", rec.count())
+	}
+	call := rec.first("PUT", "/api.php/v2/testcases/7")
+	if call == nil {
+		t.Fatal("no PUT recorded")
+	}
+	if len(call.Body) != 2 || call.Body["pri"] != float64(2) || call.Body["story"] != float64(13) {
+		t.Errorf("body = %v, want only pri and story", call.Body)
+	}
+}
+
+// Server quirk (specs/overrides.yaml testcase-update-steps-wipe): a PUT body
+// carrying title or precondition wipes the step set unless the steps ride
+// along. The CLI repairs this by re-submitting the current steps in keyed
+// form ("1", "1.1", ... by row name) - which also preserves nested groups.
+func TestTestcaseUpdate_RepairPreservesSteps(t *testing.T) {
+	rows := `[{"step":"g","expect":"","type":"group","name":"1","parent":0},` +
+		`{"step":"s1","expect":"e1","type":"step","name":"1.1","parent":10},` +
+		`{"step":"s2","expect":"e2","type":"step","name":"1.2","parent":10}]`
+
+	for name, args := range map[string][]string{
+		"title":       {"update", "7", "--title", "renamed"},
+		"precondition": {"update", "7", "--precondition", "pre"},
+	} {
+		rec := &apiRecorder{}
+		serveUpdateTestcase(t, rec, rows)
+		if code := runTestcase(args); code != 0 {
+			t.Fatalf("%s: code = %d, want 0", name, code)
+		}
+		if rec.count() != 2 {
+			t.Fatalf("%s: calls = %d, want GET (repair read) + PUT", name, rec.count())
+		}
+		if !rec.has("GET", "/api.php/v2/testcases/7") {
+			t.Fatalf("%s: missing the repair GET", name)
+		}
+		call := rec.first("PUT", "/api.php/v2/testcases/7")
+		if call == nil {
+			t.Fatalf("%s: no PUT recorded", name)
+		}
+		steps, _ := call.Body["steps"].(map[string]any)
+		expects, _ := call.Body["expects"].(map[string]any)
+		types, _ := call.Body["stepType"].(map[string]any)
+		if steps["1"] != "g" || steps["1.1"] != "s1" || steps["1.2"] != "s2" {
+			t.Errorf("%s: steps = %v, want keyed rows by name (nesting preserved)", name, steps)
+		}
+		if expects["1"] != "" || expects["1.1"] != "e1" {
+			t.Errorf("%s: expects = %v", name, expects)
+		}
+		if types["1"] != "group" || types["1.2"] != "step" {
+			t.Errorf("%s: stepType = %v", name, types)
+		}
+	}
+}
+
+// User-provided steps REPLACE the step set - no repair read happens.
+func TestTestcaseUpdate_UserStepsReplace(t *testing.T) {
+	rec := &apiRecorder{}
+	serveUpdateTestcase(t, rec, `[{"step":"old","expect":"old","type":"step","name":"1","parent":0}]`)
+
+	if code := runTestcase([]string{"update", "7", "--title", "renamed", "--step", "a", "--expect", "b"}); code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if rec.count() != 1 {
+		t.Fatalf("calls = %d, want exactly one PUT (no repair GET)", rec.count())
+	}
+	call := rec.first("PUT", "/api.php/v2/testcases/7")
+	steps, _ := call.Body["steps"].([]any)
+	expects, _ := call.Body["expects"].([]any)
+	if len(steps) != 1 || steps[0] != "a" || len(expects) != 1 || expects[0] != "b" {
+		t.Errorf("steps/expects = %v/%v, want the replacement rows", steps, expects)
+	}
+}
+
+// Usage errors exit 2 without touching the server.
+func TestTestcaseUpdate_UsageErrors(t *testing.T) {
+	rec := &apiRecorder{}
+	serveUpdateTestcase(t, rec, `[]`)
+	for name, args := range map[string][]string{
+		"no id":          {"update"},
+		"nothing":        {"update", "7"},
+		"product":        {"update", "7", "--product", "2"},
+		"project":        {"update", "7", "--project", "1"},
+		"execution":      {"update", "7", "--execution", "1"},
+		"bad type":       {"update", "7", "--type", "bogus"},
+		"pairing":        {"update", "7", "--step", "a", "--expect", "b", "--expect", "c"},
+		"unknown flag":   {"update", "7", "--title", "x", "--bogus"},
+		"missing file":   {"update", "7", "--steps-file", "/nope/steps.txt"},
+	} {
+		if code := runTestcase(args); code != 2 {
+			t.Errorf("%s: code = %d, want 2", name, code)
+		}
+	}
+	if rec.count() != 0 {
+		t.Errorf("usage errors must not reach the server, got %d calls", rec.count())
+	}
+}
+
+// An empty response body is the server's silent no-op (it drops updates with
+// unparseable rows) - it must surface as a failure, not success.
+func TestTestcaseUpdate_EmptyResponseFails(t *testing.T) {
+	srv := serveAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/api.php/v2/testcases/7" {
+			return // empty body
+		}
+		http.Error(w, "unexpected request", http.StatusNotFound)
+	})
+	_ = srv
+
+	if code := runTestcase([]string{"update", "7", "--pri", "1"}); code != 1 {
+		t.Fatalf("code = %d, want 1 (silent no-op must fail)", code)
+	}
+}
