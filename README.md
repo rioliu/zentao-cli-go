@@ -129,8 +129,9 @@ zentao task create --execution 2 --name 'Rework session handling' \
 # Subtask: --parent attaches a task under a parent task
 zentao task create --execution 2 --name 'Write session tests' --parent 55
 
-# Bug: what testing found
-zentao bug create --product 1 --title 'Session dies on page refresh' \
+# Bug: what testing found (filed under the sprint; the project is resolved
+# from the execution automatically and verified by read-back)
+zentao bug create --product 1 --execution 2 --title 'Session dies on page refresh' \
   --severity 3 --type codeerror --steps '<p>1. login 2. refresh 3. logged out</p>'
 ```
 
@@ -177,6 +178,10 @@ zentao bug close 12 --comment '<p>verified</p>'
 
 Fields can be updated at any point (`zentao story update 14 --spec '...'`,
 `zentao task update 5 --assigned-to dev2`, `zentao bug update 12 --severity 4`).
+`bug create`/`bug update` take `--execution`/`--project` for iteration
+placement - the server never derives project from execution, so the CLI
+resolves the project from the execution, sends both and verifies the save
+by read-back.
 Notes passed with `--comment` land in the object's action stream alongside the
 status change.
 

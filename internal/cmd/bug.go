@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
 
 const bugUsage = `Usage:
@@ -25,12 +29,19 @@ Create/update options:
   --assigned-to NAME     assignee
   --pri N                priority (1-4)
   --story N              related story ID
+  --execution N          execution (sprint) ID to file the bug under
+  --project N            project ID (default: resolved from --execution)
 
 Bug flow: active -> (resolve) -> resolved -> (close) -> closed; confirm and
 activate reopen. Server quirks encoded here (specs/overrides.yaml): create
 needs productID as a QUERY parameter; resolve needs resolution and takes
 resolvedBuild as a plain STRING (arrays get stringified to "Array");
-activate may require openedBuild depending on state - the CLI always sends it.`
+activate may require openedBuild depending on state - the CLI always sends it.
+
+Placement facts (verified on 22.4): create/update store execution and
+project strictly as sent - the server NEVER derives project from execution,
+so the CLI resolves the project from the execution, sends both fields and
+verifies the read-back ("success" does not mean stored).`
 
 // runBug implements the bug workflow (part of the dev loop: story -> task ->
 // bug, with comments along the way).
@@ -72,6 +83,8 @@ type bugFields struct {
 	assignedTo  *string
 	pri         *int
 	story       *int
+	execution   *int
+	project     *int
 }
 
 func registerBugFields(fs *flag.FlagSet) *bugFields {
@@ -86,6 +99,8 @@ func registerBugFields(fs *flag.FlagSet) *bugFields {
 		assignedTo:  fs.String("assigned-to", "", "assignee"),
 		pri:         fs.Int("pri", 0, "priority 1-4"),
 		story:       fs.Int("story", 0, "related story ID"),
+		execution:   fs.Int("execution", 0, "execution (sprint) ID to file the bug under"),
+		project:     fs.Int("project", 0, "project ID (default: resolved from --execution)"),
 	}
 }
 
@@ -119,6 +134,12 @@ func (f *bugFields) build(requireCreateDefaults bool) (map[string]any, error) {
 	}
 	if *f.story != 0 {
 		body["story"] = *f.story
+	}
+	if *f.execution != 0 {
+		body["execution"] = *f.execution
+	}
+	if *f.project != 0 {
+		body["project"] = *f.project
 	}
 	if requireCreateDefaults {
 		if _, ok := body["severity"]; !ok {
@@ -158,6 +179,13 @@ func bugCreate(args []string) int {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
+	// The server never derives project from execution (specs/overrides.yaml
+	// bug-execution-project-stale-on-update) - resolve the project here and
+	// send both, then verify by read-back.
+	if err := placeBug(client, *f.execution, *f.project, body); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
 	// Quirk: productID must be a QUERY parameter for bugs (specs/overrides.yaml).
 	raw, err := client.API("POST", "/bugs",
 		map[string][]string{"productID": {fmt.Sprint(*f.product)}}, body)
@@ -168,6 +196,10 @@ func bugCreate(args []string) int {
 	id, ok := createdID(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "ERROR: bug not created: %s\n", snippet(string(raw)))
+		return 1
+	}
+	if err := verifyBugPlacement(client, id, body); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
 	fmt.Printf("bug #%d created\n", id)
@@ -203,12 +235,82 @@ func bugUpdate(args []string) int {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
+	if err := placeBug(client, *f.execution, *f.project, body); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
 	if _, err := client.API("PUT", fmt.Sprintf("/bugs/%d", id), nil, body); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	if err := verifyBugPlacement(client, id, body); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
 	fmt.Printf("bug #%d updated\n", id)
 	return 0
+}
+
+// placeBug fills in the bug's execution/project placement before a write.
+// The server stores the fields strictly as sent and never derives one from
+// the other (specs/overrides.yaml bug-execution-project-stale-on-update), so
+// a bare --execution would leave project stale: resolve the execution's
+// owning project and always send both.
+func placeBug(client *zclient.Client, execution, project int, body map[string]any) error {
+	if execution == 0 || project != 0 {
+		return nil
+	}
+	owned, err := executionOwningProject(client, execution)
+	if err != nil {
+		return err
+	}
+	body["project"] = owned
+	return nil
+}
+
+// verifyBugPlacement reads the bug back and confirms the placement fields
+// match what was sent - "success" does not mean stored.
+func verifyBugPlacement(client *zclient.Client, id int, sent map[string]any) error {
+	if _, ok := sent["execution"]; !ok {
+		if _, ok := sent["project"]; !ok {
+			return nil
+		}
+	}
+	raw, err := client.API("GET", fmt.Sprintf("/bugs/%d", id), nil, nil)
+	if err != nil {
+		return fmt.Errorf("bug #%d saved, but its placement could not be read back: %v", id, err)
+	}
+	var wrapped struct {
+		Bug map[string]any `json:"bug"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil || wrapped.Bug == nil {
+		return fmt.Errorf("bug #%d saved, but the read-back response is unexpected: %s", id, snippet(string(raw)))
+	}
+	for _, key := range []string{"execution", "project"} {
+		want, ok := sent[key]
+		if !ok {
+			continue
+		}
+		got := wrapped.Bug[key]
+		if normNum(got) != normNum(want) {
+			return fmt.Errorf("bug #%d: %s not stored as sent (server kept %s=%s, want %s) - the server ignores placement fields silently",
+				id, key, key, normNum(got), normNum(want))
+		}
+	}
+	return nil
+}
+
+// normNum renders a JSON number/string field as a plain int string so
+// float64 (JSON decode) and int (flags) compare equal.
+func normNum(v any) string {
+	switch n := v.(type) {
+	case float64:
+		return strconv.Itoa(int(n))
+	case int:
+		return strconv.Itoa(n)
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 func bugGet(args []string) int {

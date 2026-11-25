@@ -1,10 +1,57 @@
 package cmd
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/rioliu/zentao-cli-go/internal/zclient"
 )
+
+// executionOwningProject resolves the project that owns an execution.
+// Server facts (specs/overrides.yaml execution-project-single-table):
+// GET /executions/{id} answers an EMPTY execution object for a project id
+// and status=fail with HTTP 200 for a missing id; GET /projects/{sprintID}
+// resolves to the PARENT project. Treat status=fail bodies as errors.
+func executionOwningProject(client *zclient.Client, id int) (int, error) {
+	raw, err := client.API("GET", fmt.Sprintf("/executions/%d", id), nil, nil)
+	if err != nil {
+		return 0, fmt.Errorf("resolve project of execution %d: %v", id, err)
+	}
+	var out struct {
+		Status    string `json:"status"`
+		Execution struct {
+			ID      int `json:"id"`
+			Project int `json:"project"`
+		} `json:"execution"`
+	}
+	if json.Unmarshal(raw, &out) == nil && out.Status == "success" && out.Execution.ID == id {
+		if out.Execution.Project != 0 {
+			return out.Execution.Project, nil
+		}
+		return 0, fmt.Errorf("execution %d has no owning project (pass --project explicitly)", id)
+	}
+	// Fallback: the id may be a row the execution serializer will not
+	// resolve - /projects/{id} answers the owning project for a sprint id.
+	raw, err = client.API("GET", fmt.Sprintf("/projects/%d", id), nil, nil)
+	if err != nil {
+		return 0, fmt.Errorf("resolve project of execution %d: %v", id, err)
+	}
+	var p struct {
+		Status  string `json:"status"`
+		Project struct {
+			ID int `json:"id"`
+		} `json:"project"`
+	}
+	if json.Unmarshal(raw, &p) == nil && p.Status == "success" && p.Project.ID != 0 {
+		if p.Project.ID == id {
+			return 0, fmt.Errorf("%d is a project id, not an execution (pass its sprint id as --execution, or use --project alone)", id)
+		}
+		return p.Project.ID, nil
+	}
+	return 0, fmt.Errorf("cannot resolve the project of execution %d (pass --project explicitly)", id)
+}
 
 const executionUsage = `Usage:
   zentao execution create --project N --name T --begin D --end D --product 3[,4] [options]
