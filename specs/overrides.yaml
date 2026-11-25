@@ -136,6 +136,21 @@ rules:
       checking the returned id matches the requested one; treat status=fail
       bodies (HTTP 200) as errors.
 
+  - id: bug-execution-project-stale-on-update
+    applies: "POST /bugs, PUT /bugs/{id} (execution/project fields)"
+    verified: "22.4"
+    server_behavior: >-
+      the bug model stores execution and project strictly as sent: create
+      accepts both in the body (a minimal create stores 0/0) and update
+      never derives project from execution - setting execution alone leaves
+      project at its old value, putting the bug under the right sprint but
+      the wrong project. Save responses claim success either way.
+    client_rule: >-
+      when --execution is given without --project, resolve the owning
+      project via the execution-project-single-table rule and send both;
+      after create/update read the bug back and fail loudly when execution
+      or project differ from what was sent ("success" does not mean stored).
+
   - id: scoped-routes-for-object-lists
     applies: "GET /projects/{id}/stories vs bare/other-scoped story lists"
     verified: "22.4"
